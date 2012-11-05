@@ -86,7 +86,6 @@ class DefaultParser(Parser):
         self.__str = [] 
         self.__str_prefix = None 
         self.__str_esc_state = False
-        pass
 
     def parse(self, context):
         for c in context:
@@ -135,13 +134,13 @@ class DefaultParser(Parser):
                     self.__str = [] 
                     self.__str_prefix = c 
                     self.__parse_state = STATE_OSC
-                elif c == 0x50 or c == 0x5f or c == 0x5e or c == 0x5f:
+                elif c == 0x50 or c == 0x58 or c == 0x5e or c == 0x5f:
                     # P(DCS) or X(SOS) or ^(PM) or _(APC)
                     self.__str_esc_state = False
                     self.__str = []
                     self.__str_prefix = c 
                     self.__parse_state = STATE_STR
-                elif 0x20 <= c or c <= 0x2f: # SP to /
+                elif 0x20 <= c and c <= 0x2f: # SP to /
                     self.__esc_prefix.append(c)
                     self.__parse_state = STATE_ESC_FINAL
                 else:
