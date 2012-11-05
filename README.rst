@@ -1,4 +1,4 @@
-TFF - Ferminal Filter Framework
+TFF - Terminal Filter Framework
 ===============================
 
 This module provides basic interfaces for terminal I/O filter applications, and exports some default implementations such as Scanner, Parser ...etc.
