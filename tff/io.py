@@ -343,6 +343,9 @@ class DefaultPTY(PTY):
         new[6][termios.VSUSP] = vdisable     # Ctrl-Z
         new[6][termios.VQUIT] = vdisable     # Ctrl-\
 
+        VDSUSP = 11
+        new[6][VDSUSP] = vdisable    # Ctrl-Y
+
         termios.tcsetattr(self.__stdin_fileno, termios.TCSANOW, new)
         pid, master = pty.fork()
         if not pid:
