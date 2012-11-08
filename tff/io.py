@@ -18,7 +18,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # ***** END LICENSE BLOCK *****
 
-import os, termios, pty, signal, fcntl, struct, select, errno
+import sys, os, termios, pty, signal, fcntl, struct, select, errno
 import codecs
 try:
     from cStringIO import StringIO
@@ -291,8 +291,8 @@ class Settings:
                  term,
                  lang,
                  termenc,
-                 stdin,
-                 stdout,
+                 stdin=sys.stdin,
+                 stdout=sys.stdout,
                  inputscanner=DefaultScanner(),
                  inputparser=DefaultParser(),
                  inputhandler=DefaultHandler(),
@@ -322,38 +322,60 @@ class DefaultPTY(PTY):
     __backup = None
     __master = None
 
-    def __init__(self, settings):
-        self.__stdin_fileno = settings.stdin.fileno()
-        self.__backup = termios.tcgetattr(self.__stdin_fileno)
-        new = termios.tcgetattr(self.__stdin_fileno)
-        new[0] &= ~(termios.IGNBRK | termios.BRKINT | termios.PARMRK 
-                  | termios.ISTRIP | termios.INLCR | termios. IGNCR 
-                  | termios.ICRNL | termios.IXON)
-        new[3] = new[3] &~ (termios.ECHO | termios.ICANON)
+    def __setupterm(self, fd):
+        self.__backup = termios.tcgetattr(fd)
+        term = termios.tcgetattr(fd)
 
+        # c_iflag
+        #IUTF8 = 16384
+        term[0] &= ~(termios.IGNBRK
+                  | termios.BRKINT
+                  | termios.PARMRK 
+                  | termios.ISTRIP
+                  | termios.INLCR
+                  | termios.IGNCR 
+                  | termios.ICRNL)
+
+        # c_lflag
+        term[3] = term[3] &~ (termios.ECHO | termios.ICANON)
+
+        # c_cc
         vdisable = os.fpathconf(self.__stdin_fileno, 'PC_VDISABLE')
-
-        new[6][termios.VINTR] = vdisable     # Ctrl-C
-        new[6][termios.VREPRINT] = vdisable  # Ctrl-R
-        new[6][termios.VSTART] = vdisable    # Ctrl-Q
-        new[6][termios.VSTOP] = vdisable     # Ctrl-S
-        new[6][termios.VLNEXT] = vdisable    # Ctrl-V
-        new[6][termios.VWERASE] = vdisable   # Ctrl-W
-        new[6][termios.VKILL] = vdisable     # Ctrl-X
-        new[6][termios.VSUSP] = vdisable     # Ctrl-Z
-        new[6][termios.VQUIT] = vdisable     # Ctrl-\
+        term[6][termios.VINTR] = vdisable     # Ctrl-C
+        term[6][termios.VREPRINT] = vdisable  # Ctrl-R
+        term[6][termios.VSTART] = vdisable    # Ctrl-Q
+        term[6][termios.VSTOP] = vdisable     # Ctrl-S
+        term[6][termios.VLNEXT] = vdisable    # Ctrl-V
+        term[6][termios.VWERASE] = vdisable   # Ctrl-W
+        term[6][termios.VKILL] = vdisable     # Ctrl-X
+        term[6][termios.VSUSP] = vdisable     # Ctrl-Z
+        term[6][termios.VQUIT] = vdisable     # Ctrl-\
 
         VDSUSP = 11
-        new[6][VDSUSP] = vdisable    # Ctrl-Y
+        term[6][VDSUSP] = vdisable    # Ctrl-Y
 
-        termios.tcsetattr(self.__stdin_fileno, termios.TCSANOW, new)
+        termios.tcsetattr(fd, termios.TCSANOW, term)
+
+    def __init__(self, settings):
+        self.__stdin_fileno = settings.stdin.fileno()
+        self.__setupterm(self.__stdin_fileno)
         pid, master = pty.fork()
         if not pid:
             os.environ['TERM'] = settings.term 
             os.environ['LANG'] = settings.lang 
+
+            term = termios.tcgetattr(self.__stdin_fileno)
+
+            # c_oflag
+            term[1] &= ~termios.ONLCR 
+            # c_cflag
+            term[2] &= ~(termios.CSIZE | termios.PARENB)
+            term[2] |= termios.CS8
+            
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, term)
             os.execlp('/bin/sh',
                       '/bin/sh', '-c',
-                      'cd $HOME && exec %s' % settings.command)
+                      'exec %s' % settings.command)
 
         self.__pid = pid
         self.__master = master
