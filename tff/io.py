@@ -122,7 +122,7 @@ class DefaultParser(Parser):
 
             elif c < 0x20 or c == 0x7f: # control character
                 context.dispatch_char(c)
-                self.__parse_state = STATE_GROUND
+                #self.__parse_state = STATE_GROUND
 
             elif self.__parse_state == STATE_ESC:
                 if c == 0x5b: # [
@@ -148,8 +148,11 @@ class DefaultParser(Parser):
                     self.__parse_state = STATE_GROUND
 
             elif self.__parse_state == STATE_ESC_FINAL:
-                context.dispatch_esc(self.__esc_prefix, c)
-                self.__parse_state = STATE_GROUND
+                if c <= 0x1f: # Control char 
+                    context.dispatch_char(c)
+                else:
+                    context.dispatch_esc(self.__esc_prefix, c)
+                    self.__parse_state = STATE_GROUND
 
             elif self.__parse_state == STATE_CSI_PARAMETER:
                 # parse control sequence
@@ -167,6 +170,8 @@ class DefaultParser(Parser):
                                          c)
                     self.__parse_state = STATE_GROUND
                 else:
+                    print "csi param:", c
+                    raise
                     self.__parse_state = STATE_GROUND
 
             elif self.__parse_state == STATE_CSI_INTERMEDIATE:
@@ -183,6 +188,8 @@ class DefaultParser(Parser):
                                          c)
                     self.__parse_state = STATE_GROUND
                 else:
+                    print "csi inter:", c
+                    raise
                     self.__parse_state = STATE_GROUND
 
             else:
@@ -199,34 +206,85 @@ class DefaultHandler(EventObserver):
         pass
 
 # EventObserver
+    def handle_start(self, context):
+        pass
+
+    def handle_end(self, context):
+        pass
+
     def handle_csi(self, context, parameter, intermediate, final):
-        context.write(0x1b) # ESC
-        context.write(0x5b) # [
-        for c in parameter:
-            context.write(c)
-        for c in intermediate:
-            context.write(c)
-        context.write(final)
+        return False
 
     def handle_esc(self, context, prefix, final):
-        context.write(0x1b) # ESC
-        for c in prefix:
-            context.write(c)
-        context.write(final)
+        return False
 
     def handle_control_string(self, context, prefix, value):
-        context.write(0x1b) # ESC
-        context.write(prefix)
-        for c in value:
-            context.write(c)
-        context.write(0x1b) # ESC
-        context.write(0x5c) # \
+        return False
 
     def handle_char(self, context, c):
-        if c < 0x20 or c == 0x7f:
-            context.write(c)
-        else: 
-            context.write(c)
+        return False
+
+    def handle_draw(self, context):
+        pass
+
+    def handle_resize(self, context, row, col):
+        pass
+
+
+################################################################################
+#
+# Multiplexer implementation
+#
+class FilterMultiplexer(EventObserver):
+
+    def __init__(self, lhs, rhs):
+        self.__lhs = lhs
+        self.__rhs = rhs
+
+    def handle_start(self, context):
+        handled_lhs = self.__lhs.handle_start(context)
+        handled_rhs = self.__rhs.handle_start(context)
+        return handled_lhs or handled_rhs
+
+    def handle_end(self, context):
+        handled_lhs = self.__lhs.handle_end(context)
+        handled_rhs = self.__rhs.handle_end(context)
+        return handled_lhs or handled_rhs
+
+    def handle_flush(self, context):
+        handled_lhs = self.__lhs.handle_flush(context)
+        handled_rhs = self.__rhs.handle_flush(context)
+        return handled_lhs or handled_rhs
+
+    def handle_csi(self, context, prefix, params, final):
+        handled_lhs = self.__lhs.handle_csi(context, prefix, params, final)
+        handled_rhs = self.__rhs.handle_csi(context, prefix, params, final)
+        return handled_lhs or handled_rhs
+
+    def handle_esc(self, context, prefix, final):
+        handled_lhs = self.__lhs.handle_esc(context, prefix, final)
+        handled_rhs = self.__rhs.handle_esc(context, prefix, final)
+        return handled_lhs or handled_rhs
+
+    def handle_control_string(self, context, prefix, value):
+        handled_lhs = self.__lhs.handle_control_string(context, prefix, value)
+        handled_rhs = self.__rhs.handle_control_string(context, prefix, value)
+        return handled_lhs or handled_rhs
+
+    def handle_char(self, context, c):
+        handled_lhs = self.__lhs.handle_char(context, c)
+        handled_rhs = self.__rhs.handle_char(context, c)
+        return handled_lhs or handled_rhs
+
+    def handle_draw(self, context):
+        handled_lhs = self.__lhs.handle_draw(context)
+        handled_rhs = self.__rhs.handle_draw(context)
+        return handled_lhs or handled_rhs
+
+    def handle_resize(self, context, row, col):
+        handled_lhs = self.__lhs.handle_resize(context, row, col)
+        handled_rhs = self.__rhs.handle_resize(context, row, col)
+        return handled_lhs or handled_rhs
 
 
 ################################################################################
@@ -236,23 +294,24 @@ class DefaultHandler(EventObserver):
 class ParseContext(OutputStream, EventDispatcher):
 
     def __init__(self,
+                 output,
                  termenc = 'UTF-8',
                  scanner = DefaultScanner(),
                  handler = DefaultHandler()):
+        #self.__output = codecs.getwriter(termenc)(output)
+        self.__output = output
         self.__termenc = termenc
         self.__scanner = scanner 
         self.__handler = handler
-        self.__output = codecs.getwriter(termenc)(StringIO())
 
     def __iter__(self):
         return self.__scanner.__iter__()
 
     def writestring(self, data):
-        self.__output.write(data)
+        self.__output.write(data.encode(self.__termenc))
 
     def assign(self, data):
         self.__scanner.assign(data, self.__termenc)
-        self.__output.truncate(0)
 
 # OutputStream
     def write(self, c):
@@ -269,48 +328,39 @@ class ParseContext(OutputStream, EventDispatcher):
 
 # EventDispatcher
     def dispatch_esc(self, prefix, final):
-        self.__handler.handle_esc(self, prefix, final)
+        if not self.__handler.handle_esc(self, prefix, final):
+            self.write(0x1b) # ESC
+            for c in prefix:
+                self.write(c)
+            self.write(final)
 
     def dispatch_csi(self, parameter, intermediate, final):
-        self.__handler.handle_csi(self, parameter, intermediate, final)
+
+        if not self.__handler.handle_csi(self, parameter, intermediate, final):
+            self.write(0x1b) # ESC
+            self.write(0x5b) # [
+            for c in parameter:
+                self.write(c)
+            for c in intermediate:
+                self.write(c)
+            self.write(final)
+
 
     def dispatch_control_string(self, prefix, value):
-        self.__handler.handle_control_string(self, prefix, value)
+        if not self.__handler.handle_control_string(self, prefix, value):
+            self.write(0x1b) # ESC
+            self.write(prefix)
+            for c in value:
+                self.write(c)
+            self.write(0x1b) # ESC
+            self.write(0x5c) # \
 
     def dispatch_char(self, c):
-        self.__handler.handle_char(self, c)
-
-################################################################################
-#
-# Settings
-#
-class Settings:
-
-    def __init__(self,
-                 command,
-                 term,
-                 lang,
-                 termenc,
-                 stdin=sys.stdin,
-                 stdout=sys.stdout,
-                 inputscanner=DefaultScanner(),
-                 inputparser=DefaultParser(),
-                 inputhandler=DefaultHandler(),
-                 outputscanner=DefaultScanner(),
-                 outputparser=DefaultParser(),
-                 outputhandler=DefaultHandler()):
-        self.command = command
-        self.term = term
-        self.lang = lang
-        self.termenc = termenc
-        self.stdin = stdin
-        self.stdout = stdout
-        self.inputscanner = inputscanner
-        self.inputparser = inputparser
-        self.inputhandler = inputhandler
-        self.outputscanner = outputscanner
-        self.outputparser = outputparser
-        self.outputhandler = outputhandler
+        if not self.__handler.handle_char(self, c):
+            if c < 0x20 or c == 0x7f:
+                self.write(c)
+            else: 
+                self.write(c)
 
 ################################################################################
 #
@@ -321,6 +371,35 @@ class DefaultPTY(PTY):
     __stdin_fileno = None
     __backup = None
     __master = None
+
+    def __init__(self, term, lang, command, stdin):
+        self.__stdin_fileno = stdin.fileno()
+        self.__setupterm(self.__stdin_fileno)
+        pid, master = pty.fork()
+        if not pid:
+            os.environ['TERM'] = term 
+            os.environ['LANG'] = lang 
+
+            term = termios.tcgetattr(0)
+
+            # c_oflag
+            term[1] &= ~termios.ONLCR 
+            # c_cflag
+            term[2] &= ~(termios.CSIZE | termios.PARENB)
+            term[2] |= termios.CS8
+            
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, term)
+            os.execlp('/bin/sh',
+                      '/bin/sh', '-c',
+                      'exec %s' % command)
+
+        self.__pid = pid
+        self.__master = master
+    
+    def __del__(self):
+        termios.tcsetattr(0,
+                          termios.TCSANOW,
+                          self.__backup)
 
     def __setupterm(self, fd):
         self.__backup = termios.tcgetattr(fd)
@@ -356,47 +435,20 @@ class DefaultPTY(PTY):
 
         termios.tcsetattr(fd, termios.TCSANOW, term)
 
-    def __init__(self, settings):
-        self.__stdin_fileno = settings.stdin.fileno()
-        self.__setupterm(self.__stdin_fileno)
-        pid, master = pty.fork()
-        if not pid:
-            os.environ['TERM'] = settings.term 
-            os.environ['LANG'] = settings.lang 
-
-            term = termios.tcgetattr(self.__stdin_fileno)
-
-            # c_oflag
-            term[1] &= ~termios.ONLCR 
-            # c_cflag
-            term[2] &= ~(termios.CSIZE | termios.PARENB)
-            term[2] |= termios.CS8
-            
-            termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, term)
-            os.execlp('/bin/sh',
-                      '/bin/sh', '-c',
-                      'exec %s' % settings.command)
-
-        self.__pid = pid
-        self.__master = master
-        signal.signal(signal.SIGWINCH, lambda no, frame: self.fitsize())
-    
-        # call resize once
-        self.fitsize()
- 
-    def __del__(self):
-        termios.tcsetattr(self.__stdin_fileno, termios.TCSANOW, self.__backup)
+    def __resize_impl(self, winsize):
+         fcntl.ioctl(self.__master, termios.TIOCSWINSZ, winsize)
+         # notify Application process that terminal size has been changed.
+         os.kill(self.__pid, signal.SIGWINCH)
 
     def fitsize(self):
          winsize = fcntl.ioctl(self.__stdin_fileno, termios.TIOCGWINSZ, 'hhhh')
          height, width = struct.unpack('hh', winsize)
-         self.resize(height, width)
+         self.__resize_impl(winsize)
+         return height, width
 
     def resize(self, height, width):
          winsize = struct.pack('HHHH', height, width, 0, 0)
-         fcntl.ioctl(self.__master, termios.TIOCSWINSZ, winsize)
-         # notify Application process that terminal size has been changed.
-         os.kill(self.__pid, signal.SIGWINCH)
+         self.__resize_impl(winsize)
          return height, width
 
     def read(self):
@@ -404,6 +456,14 @@ class DefaultPTY(PTY):
 
     def write(self, data):
         os.write(self.__master, data)
+
+    def xoff(self):
+        #fcntl.ioctl(self.__master, termios.TIOCSTOP, 0)
+        termios.tcflow(self.__master, termios.TCOOFF)
+
+    def xon(self):
+        #fcntl.ioctl(self.__master, termios.TIOCSTART, 0)
+        termios.tcflow(self.__master, termios.TCOON)
 
     def drive(self):
         master = self.__master
@@ -421,11 +481,11 @@ class DefaultPTY(PTY):
                         if fd == stdin_fileno:
                             data = os.read(stdin_fileno, BUFFER_SIZE)
                             if data:
-                                yield data, None
+                                yield data, None, None
                         elif fd == master:
                             data = self.read()
                             if data:
-                                yield None, data
+                                yield None, data, None
                 except OSError, e:
                     no, msg = e
                     if no == errno.EIO:
@@ -433,7 +493,7 @@ class DefaultPTY(PTY):
                 except select.error, e:
                     no, msg = e
                     if no == errno.EINTR:
-                        pass
+                        yield None, None, e
                     else:
                         raise
         finally:
@@ -446,32 +506,63 @@ class DefaultPTY(PTY):
 #
 class Session:
 
-    def start(self, settings):
+    def __init__(self, tty):
+        self.tty = tty
 
-        tty = DefaultPTY(settings)
+    def start(self,
+              termenc,
+              stdin=sys.stdin,
+              stdout=sys.stdout,
+              inputscanner=DefaultScanner(),
+              inputparser=DefaultParser(),
+              inputhandler=DefaultHandler(),
+              outputscanner=DefaultScanner(),
+              outputparser=DefaultParser(),
+              outputhandler=DefaultHandler()):
+ 
+        tty = self.tty
 
-        input_context = ParseContext(termenc=settings.termenc,
-                                     scanner=settings.inputscanner,
-                                     handler=settings.inputhandler)
-        input_parser = settings.inputparser 
+        inputcontext = ParseContext(tty,
+                                    termenc=termenc,
+                                    scanner=inputscanner,
+                                    handler=inputhandler)
+        outputcontext = ParseContext(stdout,
+                                     termenc=termenc,
+                                     scanner=outputscanner,
+                                     handler=outputhandler)
+        resized = False
 
-        output_context = ParseContext(termenc=settings.termenc,
-                                      scanner=settings.outputscanner,
-                                      handler=settings.outputhandler)
-        output_parser = settings.outputparser
+        def onresize(no, frame):
+            if not resized:
+                global resized
+                resized = True
+        signal.signal(signal.SIGWINCH, onresize)
 
-        stdout = settings.stdout
-        for idata, odata in tty.drive():
-            if idata:
-                input_context.assign(idata)
-                input_parser.parse(input_context)
-                tty.write(input_context.getvalue())
-            if odata:
-                output_context.assign(odata)
-                output_parser.parse(output_context)
-                stdout.write(output_context.getvalue())
+        inputhandler.handle_start(inputcontext)
+        outputhandler.handle_start(outputcontext)
+        try:
+            for idata, odata, edata in tty.drive():
+                if idata:
+                    inputcontext.assign(idata)
+                    inputparser.parse(inputcontext)
+                    inputhandler.handle_draw(inputcontext)
+                if odata:
+                    outputcontext.assign(odata)
+                    outputparser.parse(outputcontext)
+                    outputhandler.handle_draw(outputcontext)
                 stdout.flush()
-
+                if edata:
+                    if resized:
+                        global resized
+                        resized = False
+                        row, col = tty.fitsize()
+                        inputhandler.handle_resize(inputcontext, row, col)
+                        outputhandler.handle_resize(outputcontext, row, col)
+                    else:
+                        raise edata
+        finally:
+            inputhandler.handle_end(inputcontext)
+            outputhandler.handle_end(outputcontext)
 
 ''' main '''
 if __name__ == '__main__':    

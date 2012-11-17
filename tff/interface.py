@@ -36,6 +36,14 @@ class EventObserver:
     __metaclass__ = abc.ABCMeta
 
     @abc.abstractmethod
+    def handle_start(self, context):
+        pass
+
+    @abc.abstractmethod
+    def handle_end(self, context):
+        pass
+
+    @abc.abstractmethod
     def handle_csi(self, context, prefix, params, final):
         pass
 
@@ -50,6 +58,15 @@ class EventObserver:
     @abc.abstractmethod
     def handle_char(self, context, c):
         pass
+
+    @abc.abstractmethod
+    def handle_draw(self, context):
+        pass
+
+    @abc.abstractmethod
+    def handle_resize(self, context, row, col):
+        pass
+
 
 class Scanner:
     ''' forward input iterator '''
@@ -125,6 +142,14 @@ class PTY:
 
     @abc.abstractmethod
     def write(self, data):
+        pass
+
+    @abc.abstractmethod
+    def xon(self):
+        pass
+
+    @abc.abstractmethod
+    def xoff(self):
         pass
 
     @abc.abstractmethod

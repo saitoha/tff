@@ -26,20 +26,20 @@ sys.path.insert(0, parent)
 
 import tff
 
-settings = tff.Settings(command=os.path.join(current, 'test1.py'),
-                        term='xterm',
-                        lang='en_JS.UTF-8',
-                        termenc='UTF-8',
-                        stdin=sys.stdin,
-                        stdout=sys.stdout,
-                        inputscanner=tff.DefaultScanner(),
-                        inputparser=tff.DefaultParser(),
-                        inputhandler=tff.DefaultHandler(),
-                        outputscanner=tff.DefaultScanner(),
-                        outputparser=tff.DefaultParser(),
-                        outputhandler=tff.DefaultHandler())
-session = tff.Session()
-session.start(settings)
+#settings = tff.Settings(command=os.path.join(current, 'test1.py'),
+#                        term='xterm',
+#                        lang='en_JS.UTF-8',
+#                        termenc='UTF-8',
+#                        stdin=sys.stdin,
+#                        stdout=sys.stdout,
+#                        inputscanner=tff.DefaultScanner(),
+#                        inputparser=tff.DefaultParser(),
+#                        inputhandler=tff.DefaultHandler(),
+#                        outputscanner=tff.DefaultScanner(),
+#                        outputparser=tff.DefaultParser(),
+#                        outputhandler=tff.DefaultHandler())
+#session = tff.Session()
+#session.start(settings)
 
 print "ok"
 
