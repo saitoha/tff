@@ -20,7 +20,7 @@
 
 # terminal filter framework
 __author__  = "Hayaki Saito (user@zuse.jp)"
-__version__ = "0.0.7"
+__version__ = "0.0.8"
 __license__ = "GPL v3"
 
 from interface import *

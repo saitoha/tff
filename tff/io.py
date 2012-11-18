@@ -244,47 +244,47 @@ class FilterMultiplexer(EventObserver):
     def handle_start(self, context):
         handled_lhs = self.__lhs.handle_start(context)
         handled_rhs = self.__rhs.handle_start(context)
-        return handled_lhs or handled_rhs
+        return handled_lhs and handled_rhs
 
     def handle_end(self, context):
         handled_lhs = self.__lhs.handle_end(context)
         handled_rhs = self.__rhs.handle_end(context)
-        return handled_lhs or handled_rhs
+        return handled_lhs and handled_rhs
 
     def handle_flush(self, context):
         handled_lhs = self.__lhs.handle_flush(context)
         handled_rhs = self.__rhs.handle_flush(context)
-        return handled_lhs or handled_rhs
+        return handled_lhs and handled_rhs
 
     def handle_csi(self, context, prefix, params, final):
         handled_lhs = self.__lhs.handle_csi(context, prefix, params, final)
         handled_rhs = self.__rhs.handle_csi(context, prefix, params, final)
-        return handled_lhs or handled_rhs
+        return handled_lhs and handled_rhs
 
     def handle_esc(self, context, prefix, final):
         handled_lhs = self.__lhs.handle_esc(context, prefix, final)
         handled_rhs = self.__rhs.handle_esc(context, prefix, final)
-        return handled_lhs or handled_rhs
+        return handled_lhs and handled_rhs
 
     def handle_control_string(self, context, prefix, value):
         handled_lhs = self.__lhs.handle_control_string(context, prefix, value)
         handled_rhs = self.__rhs.handle_control_string(context, prefix, value)
-        return handled_lhs or handled_rhs
+        return handled_lhs and handled_rhs
 
     def handle_char(self, context, c):
         handled_lhs = self.__lhs.handle_char(context, c)
         handled_rhs = self.__rhs.handle_char(context, c)
-        return handled_lhs or handled_rhs
+        return handled_lhs and handled_rhs
 
     def handle_draw(self, context):
         handled_lhs = self.__lhs.handle_draw(context)
         handled_rhs = self.__rhs.handle_draw(context)
-        return handled_lhs or handled_rhs
+        return handled_lhs and handled_rhs
 
     def handle_resize(self, context, row, col):
         handled_lhs = self.__lhs.handle_resize(context, row, col)
         handled_rhs = self.__rhs.handle_resize(context, row, col)
-        return handled_lhs or handled_rhs
+        return handled_lhs and handled_rhs
 
 
 ################################################################################
@@ -294,24 +294,23 @@ class FilterMultiplexer(EventObserver):
 class ParseContext(OutputStream, EventDispatcher):
 
     def __init__(self,
-                 output,
                  termenc = 'UTF-8',
                  scanner = DefaultScanner(),
                  handler = DefaultHandler()):
-        #self.__output = codecs.getwriter(termenc)(output)
-        self.__output = output
         self.__termenc = termenc
         self.__scanner = scanner 
         self.__handler = handler
+        self.__output = codecs.getwriter(termenc)(StringIO())
 
     def __iter__(self):
         return self.__scanner.__iter__()
 
     def writestring(self, data):
-        self.__output.write(data.encode(self.__termenc))
+        self.__output.write(data)
 
     def assign(self, data):
         self.__scanner.assign(data, self.__termenc)
+        self.__output.truncate(0)
 
 # OutputStream
     def write(self, c):
@@ -522,12 +521,10 @@ class Session:
  
         tty = self.tty
 
-        inputcontext = ParseContext(tty,
-                                    termenc=termenc,
+        inputcontext = ParseContext(termenc=termenc,
                                     scanner=inputscanner,
                                     handler=inputhandler)
-        outputcontext = ParseContext(stdout,
-                                     termenc=termenc,
+        outputcontext = ParseContext(termenc=termenc,
                                      scanner=outputscanner,
                                      handler=outputhandler)
         resized = False
@@ -546,11 +543,13 @@ class Session:
                     inputcontext.assign(idata)
                     inputparser.parse(inputcontext)
                     inputhandler.handle_draw(inputcontext)
+                    tty.write(inputcontext.getvalue())
                 if odata:
                     outputcontext.assign(odata)
                     outputparser.parse(outputcontext)
                     outputhandler.handle_draw(outputcontext)
-                stdout.flush()
+                    stdout.write(outputcontext.getvalue())
+                    stdout.flush()
                 if edata:
                     if resized:
                         global resized
