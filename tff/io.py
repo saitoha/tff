@@ -34,6 +34,29 @@ BUFFER_SIZE=2048
 
 ################################################################################
 #
+# Exceptions 
+#
+class NotHandledException(Exception):
+    ''' thrown when unknown seqnence is detected '''
+
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return repr(self.value)
+
+class ParseException(Exception):
+    ''' thrown when parse error is detected '''
+
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return repr(self.value)
+
+
+################################################################################
+#
 # Scanner implementation
 #
 class DefaultScanner(Scanner):
@@ -170,9 +193,8 @@ class DefaultParser(Parser):
                                          c)
                     self.__parse_state = STATE_GROUND
                 else:
-                    print "csi param:", c
-                    raise
                     self.__parse_state = STATE_GROUND
+                    #raise ParseException("Unknown CSI seqnence detected.")
 
             elif self.__parse_state == STATE_CSI_INTERMEDIATE:
                 # parse control sequence
@@ -188,9 +210,8 @@ class DefaultParser(Parser):
                                          c)
                     self.__parse_state = STATE_GROUND
                 else:
-                    print "csi inter:", c
-                    raise
                     self.__parse_state = STATE_GROUND
+                    #raise ParseException("Unknown CSI seqnence detected.")
 
             else:
                 context.dispatch_char(c)
@@ -294,13 +315,14 @@ class FilterMultiplexer(EventObserver):
 class ParseContext(OutputStream, EventDispatcher):
 
     def __init__(self,
+                 output,
                  termenc = 'UTF-8',
                  scanner = DefaultScanner(),
                  handler = DefaultHandler()):
         self.__termenc = termenc
         self.__scanner = scanner 
         self.__handler = handler
-        self.__output = codecs.getwriter(termenc)(StringIO())
+        self.__output = codecs.getwriter(termenc)(output)
 
     def __iter__(self):
         return self.__scanner.__iter__()
@@ -310,7 +332,7 @@ class ParseContext(OutputStream, EventDispatcher):
 
     def assign(self, data):
         self.__scanner.assign(data, self.__termenc)
-        self.__output.truncate(0)
+        #self.__output.truncate(0)
 
 # OutputStream
     def write(self, c):
@@ -382,12 +404,12 @@ class DefaultPTY(PTY):
             term = termios.tcgetattr(0)
 
             # c_oflag
-            term[1] &= ~termios.ONLCR 
+            #term[1] &= ~termios.ONLCR 
             # c_cflag
             term[2] &= ~(termios.CSIZE | termios.PARENB)
             term[2] |= termios.CS8
             
-            termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, term)
+            termios.tcsetattr(0, termios.TCSANOW, term)
             os.execlp('/bin/sh',
                       '/bin/sh', '-c',
                       'exec %s' % command)
@@ -450,6 +472,9 @@ class DefaultPTY(PTY):
          self.__resize_impl(winsize)
          return height, width
 
+    def fileno(self):
+        return self.__master
+
     def read(self):
         return os.read(self.__master, BUFFER_SIZE)
 
@@ -494,7 +519,7 @@ class DefaultPTY(PTY):
                     if no == errno.EINTR:
                         yield None, None, e
                     else:
-                        raise
+                        raise e
         finally:
             os.close(master)
 
@@ -521,10 +546,12 @@ class Session:
  
         tty = self.tty
 
-        inputcontext = ParseContext(termenc=termenc,
+        inputcontext = ParseContext(output=tty,
+                                    termenc=termenc,
                                     scanner=inputscanner,
                                     handler=inputhandler)
-        outputcontext = ParseContext(termenc=termenc,
+        outputcontext = ParseContext(output=stdout,
+                                     termenc=termenc,
                                      scanner=outputscanner,
                                      handler=outputhandler)
         resized = False
@@ -543,13 +570,13 @@ class Session:
                     inputcontext.assign(idata)
                     inputparser.parse(inputcontext)
                     inputhandler.handle_draw(inputcontext)
-                    tty.write(inputcontext.getvalue())
+                    #tty.write(inputcontext.getvalue())
                 if odata:
                     outputcontext.assign(odata)
                     outputparser.parse(outputcontext)
                     outputhandler.handle_draw(outputcontext)
-                    stdout.write(outputcontext.getvalue())
-                    stdout.flush()
+                    #stdout.write(outputcontext.getvalue())
+                stdout.flush()
                 if edata:
                     if resized:
                         global resized
