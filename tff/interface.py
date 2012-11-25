@@ -91,7 +91,7 @@ class OutputStream:
         pass
 
     @abc.abstractmethod
-    def getvalue(self):
+    def flush(self):
         pass
 
 

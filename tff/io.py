@@ -20,17 +20,9 @@
 
 import sys, os, termios, pty, signal, fcntl, struct, select, errno
 import codecs
-try:
-    from cStringIO import StringIO
-except:
-    try:
-        from StringIO import StringIO
-    except:
-        from io import StringIO
-
 from interface import * # terminal filter framework interface
 
-BUFFER_SIZE=2048
+BUFFER_SIZE = 2048
 
 ################################################################################
 #
@@ -60,15 +52,31 @@ class ParseException(Exception):
 # Scanner implementation
 #
 class DefaultScanner(Scanner):
-    ''' scan input stream and iterate characters '''
+    ''' scan input stream and iterate UCS-2 code points '''
     __data = None
+    _ucs4 = False
+
+    def __init__(self, ucs4=False):
+        self._ucs4 = ucs4
 
     def assign(self, value, termenc):
         self.__data = unicode(value, termenc, 'ignore')
 
     def __iter__(self):
-        for x in self.__data:
-            yield ord(x)
+        if self._ucs4:
+            c1 = 0
+            for x in self.__data:
+                c = ord(x) 
+                if c >= 0xd800 and c <= 0xdbff:
+                    c1 = c - 0xd800
+                    continue
+                elif c1 != 0 and c >= 0xdc00 and c <= 0xdfff:
+                    c =  0x10000 + ((c1 << 10) | (c - 0xdc00))
+                    c1 = 0
+                yield c
+        else:
+            for x in self.__data:
+                yield ord(x)
 
 ################################################################################
 #
@@ -87,97 +95,103 @@ class SimpleParser(Parser):
 #
 # Default Parser implementation
 #
-STATE_GROUND = 0
-STATE_ESC = 1
-STATE_ESC_FINAL = 2
-
-STATE_CSI_PARAMETER = 3
-STATE_CSI_INTERMEDIATE = 4
-STATE_CSI_FINAL = 5
-
-STATE_OSC = 6
-STATE_STR = 7 
+_STATE_GROUND = 0
+_STATE_ESC = 1
+_STATE_ESC_INTERMEDIATE = 2
+_STATE_CSI_PARAMETER = 3
+_STATE_CSI_INTERMEDIATE = 4
+_STATE_OSC = 6
+_STATE_STR = 7 
 
 class DefaultParser(Parser):
     ''' parse ESC/CSI/string seqneces '''
 
     def __init__(self):
-        self.__parse_state = STATE_GROUND
+        self.__parse_state = _STATE_GROUND
         self.__csi_parameter = [] 
         self.__csi_intermediate = [] 
-        self.__esc_prefix = [] 
+        self.__esc_intermediate = [] 
         self.__str = [] 
         self.__str_prefix = None 
         self.__str_esc_state = False
 
     def parse(self, context):
         for c in context:
-            if self.__parse_state == STATE_OSC:
+            if self.__parse_state == _STATE_OSC:
                 # parse control string
                 if c == 0x1b:
                     self.__str_esc_state = True
                 elif c == 0x5c and self.__str_esc_state == True:
                     context.dispatch_control_string(self.__str_prefix, self.__str)
-                    self.__parse_state = STATE_GROUND
+                    self.__parse_state = _STATE_GROUND
                 elif c == 0x07:
                     context.dispatch_control_string(self.__str_prefix, self.__str)
-                    self.__parse_state = STATE_GROUND
+                    self.__parse_state = _STATE_GROUND
                 elif c < 0x20:
-                    self.__parse_state = STATE_GROUND
+                    self.__parse_state = _STATE_GROUND
                 else:
                     self.__str.append(c)
 
-            elif self.__parse_state == STATE_STR:
+            elif self.__parse_state == _STATE_STR:
                 # parse control string
                 if c == 0x1b:
                     self.__str_esc_state = True
                 elif c == 0x5c and self.__str_esc_state == True:
                     context.dispatch_control_string(self.__str_prefix, self.__str)
-                    self.__parse_state = STATE_GROUND
+                    self.__parse_state = _STATE_GROUND
                 elif c < 0x20:
-                    self.__parse_state = STATE_GROUND
+                    self.__parse_state = _STATE_GROUND
                 else:
                     self.__str.append(c)
 
             elif c == 0x1b: # ESC
-                self.__esc_prefix = []
-                self.__parse_state = STATE_ESC
+                self.__esc_intermediate = []
+                self.__parse_state = _STATE_ESC
 
             elif c < 0x20 or c == 0x7f: # control character
                 context.dispatch_char(c)
-                #self.__parse_state = STATE_GROUND
+                #self.__parse_state = _STATE_GROUND
 
-            elif self.__parse_state == STATE_ESC:
+            elif self.__parse_state == _STATE_ESC:
                 if c == 0x5b: # [
                     self.__csi_parameter = []
                     self.__csi_intermediate = [] 
-                    self.__parse_state = STATE_CSI_PARAMETER
+                    self.__parse_state = _STATE_CSI_PARAMETER
                 elif c == 0x5d: # ]
                     self.__str_esc_state = False
                     self.__str = [] 
                     self.__str_prefix = c 
-                    self.__parse_state = STATE_OSC
+                    self.__parse_state = _STATE_OSC
                 elif c == 0x50 or c == 0x58 or c == 0x5e or c == 0x5f:
                     # P(DCS) or X(SOS) or ^(PM) or _(APC)
                     self.__str_esc_state = False
                     self.__str = []
                     self.__str_prefix = c 
-                    self.__parse_state = STATE_STR
+                    self.__parse_state = _STATE_STR
                 elif 0x20 <= c and c <= 0x2f: # SP to /
-                    self.__esc_prefix.append(c)
-                    self.__parse_state = STATE_ESC_FINAL
+                    self.__esc_intermediate.append(c)
+                    self.__parse_state = _STATE_ESC_INTERMEDIATE
+                elif c <= 0x7e: # ~
+                    context.dispatch_esc(self.__esc_intermediate, c)
+                    self.__parse_state = _STATE_GROUND
                 else:
-                    context.dispatch_esc(self.__esc_prefix, c)
-                    self.__parse_state = STATE_GROUND
+                    self.__parse_state = _STATE_GROUND
+                    #raise ParseException("Unknown ESC seqnence detected.")
 
-            elif self.__parse_state == STATE_ESC_FINAL:
+            elif self.__parse_state == _STATE_ESC_INTERMEDIATE:
                 if c <= 0x1f: # Control char 
                     context.dispatch_char(c)
+                elif 0x20 <= c and c <= 0x2f: # SP to /
+                    self.__esc_intermediate.append(c)
+                    self.__parse_state = _STATE_ESC_INTERMEDIATE
+                elif 0x30 <= c and c <= 0x7e: # 0 to ~, Final byte
+                    context.dispatch_esc(self.__esc_intermediate, c)
+                    self.__parse_state = _STATE_GROUND
                 else:
-                    context.dispatch_esc(self.__esc_prefix, c)
-                    self.__parse_state = STATE_GROUND
+                    self.__parse_state = _STATE_GROUND
+                    #raise ParseException("Unknown ESC seqnence detected.")
 
-            elif self.__parse_state == STATE_CSI_PARAMETER:
+            elif self.__parse_state == _STATE_CSI_PARAMETER:
                 # parse control sequence
                 #
                 # CSI P ... P I ... I F
@@ -186,31 +200,31 @@ class DefaultParser(Parser):
                     self.__csi_parameter.append(c)
                 elif 0x20 <= c and c <= 0x2f: # intermediate, SP to /
                     self.__csi_intermediate.append(c)
-                    self.__parse_state = STATE_CSI_INTERMEDIATE
+                    self.__parse_state = _STATE_CSI_INTERMEDIATE
                 elif 0x40 <= c and c <= 0x7e: # Final byte, @ to ~
                     context.dispatch_csi(self.__csi_parameter,
                                          self.__csi_intermediate,
                                          c)
-                    self.__parse_state = STATE_GROUND
+                    self.__parse_state = _STATE_GROUND
                 else:
-                    self.__parse_state = STATE_GROUND
+                    self.__parse_state = _STATE_GROUND
                     #raise ParseException("Unknown CSI seqnence detected.")
 
-            elif self.__parse_state == STATE_CSI_INTERMEDIATE:
+            elif self.__parse_state == _STATE_CSI_INTERMEDIATE:
                 # parse control sequence
                 #
                 # CSI P ... P I ... I F
                 #             ^
                 if 0x20 <= c and c <= 0x2f: # intermediate, SP to /
                     self.__csi_intermediate.append(c)
-                    self.__parse_state = STATE_CSI_INTERMEDIATE
+                    self.__parse_state = _STATE_CSI_INTERMEDIATE
                 elif 0x40 <= c and c <= 0x7e: # Final byte, @ to ~
                     context.dispatch_csi(self.__csi_parameter,
                                          self.__csi_intermediate,
                                          c)
-                    self.__parse_state = STATE_GROUND
+                    self.__parse_state = _STATE_GROUND
                 else:
-                    self.__parse_state = STATE_GROUND
+                    self.__parse_state = _STATE_GROUND
                     #raise ParseException("Unknown CSI seqnence detected.")
 
             else:
@@ -236,7 +250,7 @@ class DefaultHandler(EventObserver):
     def handle_csi(self, context, parameter, intermediate, final):
         return False
 
-    def handle_esc(self, context, prefix, final):
+    def handle_esc(self, context, intermediate, final):
         return False
 
     def handle_control_string(self, context, prefix, value):
@@ -277,14 +291,14 @@ class FilterMultiplexer(EventObserver):
         handled_rhs = self.__rhs.handle_flush(context)
         return handled_lhs and handled_rhs
 
-    def handle_csi(self, context, prefix, params, final):
-        handled_lhs = self.__lhs.handle_csi(context, prefix, params, final)
-        handled_rhs = self.__rhs.handle_csi(context, prefix, params, final)
+    def handle_csi(self, context, params, intermediate, final):
+        handled_lhs = self.__lhs.handle_csi(context, params, intermediate, final)
+        handled_rhs = self.__rhs.handle_csi(context, params, intermediate, final)
         return handled_lhs and handled_rhs
 
-    def handle_esc(self, context, prefix, final):
-        handled_lhs = self.__lhs.handle_esc(context, prefix, final)
-        handled_rhs = self.__rhs.handle_esc(context, prefix, final)
+    def handle_esc(self, context, intermediate, final):
+        handled_lhs = self.__lhs.handle_esc(context, intermediate, final)
+        handled_rhs = self.__rhs.handle_esc(context, intermediate, final)
         return handled_lhs and handled_rhs
 
     def handle_control_string(self, context, prefix, value):
@@ -314,15 +328,30 @@ class FilterMultiplexer(EventObserver):
 #
 class ParseContext(OutputStream, EventDispatcher):
 
+    __c1 = 0
+
     def __init__(self,
                  output,
                  termenc = 'UTF-8',
                  scanner = DefaultScanner(),
-                 handler = DefaultHandler()):
+                 handler = DefaultHandler(),
+                 buffering = False):
         self.__termenc = termenc
         self.__scanner = scanner 
         self.__handler = handler
-        self.__output = codecs.getwriter(termenc)(output)
+        if buffering:
+            try:
+                from cStringIO import StringIO
+            except:
+                try:
+                    from StringIO import StringIO
+                except:
+                    from io import StringIO
+            self.__output = codecs.getwriter(termenc)(StringIO())
+        else:
+            self.__output = codecs.getwriter(termenc)(output)
+        self.__target_output = output
+        self._buffering = buffering
 
     def __iter__(self):
         return self.__scanner.__iter__()
@@ -332,31 +361,40 @@ class ParseContext(OutputStream, EventDispatcher):
 
     def assign(self, data):
         self.__scanner.assign(data, self.__termenc)
-        #self.__output.truncate(0)
+        if self._buffering:
+            self.__output.truncate(0)
 
 # OutputStream
     def write(self, c):
         if c < 0x80:
             self.__output.write(chr(c))
-        else:
-            try:
-                self.__output.write(unichr(c))
-            except:
-                self.__output.write('?')
+        elif c >= 0xd800 and c <= 0xdbff:
+            self.__c1 = c
+        elif c >= 0xdc00 and c <= 0xdfff:
+            self.__output.write(unichr(self.__c1) + unichr(c))
+        elif c < 0x10000:
+            self.__output.write(unichr(c))
+        else: # c > 0x10000
+            c -= 0x10000
+            c1 = (c >> 10) + 0xd800
+            c2 = (c & 0x3ff) + 0xdc00
+            self.__output.write(unichr(c1) + unichr(c2))
 
-    def getvalue(self):
-        return self.__output.getvalue()
+    def flush(self):
+        if self._buffering:
+            self.__target_output.write(self.__output)
+        self.__target_output.flush()
+
 
 # EventDispatcher
-    def dispatch_esc(self, prefix, final):
-        if not self.__handler.handle_esc(self, prefix, final):
+    def dispatch_esc(self, intermediate, final):
+        if not self.__handler.handle_esc(self, intermediate, final):
             self.write(0x1b) # ESC
-            for c in prefix:
+            for c in intermediate:
                 self.write(c)
             self.write(final)
 
     def dispatch_csi(self, parameter, intermediate, final):
-
         if not self.__handler.handle_csi(self, parameter, intermediate, final):
             self.write(0x1b) # ESC
             self.write(0x5b) # [
@@ -365,7 +403,6 @@ class ParseContext(OutputStream, EventDispatcher):
             for c in intermediate:
                 self.write(c)
             self.write(final)
-
 
     def dispatch_control_string(self, prefix, value):
         if not self.__handler.handle_control_string(self, prefix, value):
@@ -389,13 +426,14 @@ class ParseContext(OutputStream, EventDispatcher):
 #
 class DefaultPTY(PTY):
 
-    __stdin_fileno = None
-    __backup = None
-    __master = None
+    _stdin_fileno = None
+    _backup_termios = None
+    _master = None
 
     def __init__(self, term, lang, command, stdin):
-        self.__stdin_fileno = stdin.fileno()
-        self.__setupterm(self.__stdin_fileno)
+        self._stdin_fileno = stdin.fileno()
+        backup = termios.tcgetattr(self._stdin_fileno)
+        self.__setupterm(self._stdin_fileno)
         pid, master = pty.fork()
         if not pid:
             os.environ['TERM'] = term 
@@ -404,10 +442,11 @@ class DefaultPTY(PTY):
             term = termios.tcgetattr(0)
 
             # c_oflag
+            term[1] = backup[1]
             #term[1] &= ~termios.ONLCR 
             # c_cflag
-            term[2] &= ~(termios.CSIZE | termios.PARENB)
-            term[2] |= termios.CS8
+            #term[2] &= ~(termios.CSIZE | termios.PARENB)
+            #term[2] |= termios.CS8
             
             termios.tcsetattr(0, termios.TCSANOW, term)
             os.execlp('/bin/sh',
@@ -415,18 +454,18 @@ class DefaultPTY(PTY):
                       'exec %s' % command)
 
         self.__pid = pid
-        self.__master = master
+        self._master = master
     
     def __del__(self):
-        termios.tcsetattr(0,
+        termios.tcsetattr(self._stdin_fileno,
                           termios.TCSANOW,
-                          self.__backup)
+                          self._backup_termios)
 
     def __setupterm(self, fd):
-        self.__backup = termios.tcgetattr(fd)
+        self._backup_termios = termios.tcgetattr(fd)
         term = termios.tcgetattr(fd)
 
-        # c_iflag
+        ## c_iflag
         #IUTF8 = 16384
         term[0] &= ~(termios.IGNBRK
                   | termios.BRKINT
@@ -436,11 +475,11 @@ class DefaultPTY(PTY):
                   | termios.IGNCR 
                   | termios.ICRNL)
 
-        # c_lflag
+        ## c_lflag
         term[3] = term[3] &~ (termios.ECHO | termios.ICANON)
 
         # c_cc
-        vdisable = os.fpathconf(self.__stdin_fileno, 'PC_VDISABLE')
+        vdisable = os.fpathconf(self._stdin_fileno, 'PC_VDISABLE')
         term[6][termios.VINTR] = vdisable     # Ctrl-C
         term[6][termios.VREPRINT] = vdisable  # Ctrl-R
         term[6][termios.VSTART] = vdisable    # Ctrl-Q
@@ -457,12 +496,12 @@ class DefaultPTY(PTY):
         termios.tcsetattr(fd, termios.TCSANOW, term)
 
     def __resize_impl(self, winsize):
-         fcntl.ioctl(self.__master, termios.TIOCSWINSZ, winsize)
+         fcntl.ioctl(self._master, termios.TIOCSWINSZ, winsize)
          # notify Application process that terminal size has been changed.
          os.kill(self.__pid, signal.SIGWINCH)
 
     def fitsize(self):
-         winsize = fcntl.ioctl(self.__stdin_fileno, termios.TIOCGWINSZ, 'hhhh')
+         winsize = fcntl.ioctl(self._stdin_fileno, termios.TIOCGWINSZ, 'hhhh')
          height, width = struct.unpack('hh', winsize)
          self.__resize_impl(winsize)
          return height, width
@@ -473,25 +512,25 @@ class DefaultPTY(PTY):
          return height, width
 
     def fileno(self):
-        return self.__master
+        return self._master
 
     def read(self):
-        return os.read(self.__master, BUFFER_SIZE)
+        return os.read(self._master, BUFFER_SIZE)
 
     def write(self, data):
-        os.write(self.__master, data)
+        os.write(self._master, data)
 
     def xoff(self):
-        #fcntl.ioctl(self.__master, termios.TIOCSTOP, 0)
-        termios.tcflow(self.__master, termios.TCOOFF)
+        #fcntl.ioctl(self._master, termios.TIOCSTOP, 0)
+        termios.tcflow(self._master, termios.TCOOFF)
 
     def xon(self):
-        #fcntl.ioctl(self.__master, termios.TIOCSTART, 0)
-        termios.tcflow(self.__master, termios.TCOON)
+        #fcntl.ioctl(self._master, termios.TIOCSTART, 0)
+        termios.tcflow(self._master, termios.TCOON)
 
     def drive(self):
-        master = self.__master
-        stdin_fileno = self.__stdin_fileno
+        master = self._master
+        stdin_fileno = self._stdin_fileno
         rfds = [stdin_fileno, master]
         wfds = []
         xfds = [stdin_fileno, master]
@@ -523,6 +562,7 @@ class DefaultPTY(PTY):
         finally:
             os.close(master)
 
+
  
 ################################################################################
 #
@@ -542,48 +582,53 @@ class Session:
               inputhandler=DefaultHandler(),
               outputscanner=DefaultScanner(),
               outputparser=DefaultParser(),
-              outputhandler=DefaultHandler()):
+              outputhandler=DefaultHandler(),
+              buffering=False):
  
         tty = self.tty
-
         inputcontext = ParseContext(output=tty,
                                     termenc=termenc,
                                     scanner=inputscanner,
-                                    handler=inputhandler)
+                                    handler=inputhandler,
+                                    buffering=buffering)
         outputcontext = ParseContext(output=stdout,
                                      termenc=termenc,
                                      scanner=outputscanner,
-                                     handler=outputhandler)
-        resized = False
+                                     handler=outputhandler,
+                                     buffering=buffering)
+        self._resized = False
 
         def onresize(no, frame):
-            if not resized:
-                global resized
-                resized = True
+            if not self._resized:
+                self._resized = True
         signal.signal(signal.SIGWINCH, onresize)
 
         inputhandler.handle_start(inputcontext)
         outputhandler.handle_start(outputcontext)
+        inputhandler.handle_draw(inputcontext)
+        outputhandler.handle_draw(outputcontext)
+        outputcontext.flush()
         try:
             for idata, odata, edata in tty.drive():
                 if idata:
                     inputcontext.assign(idata)
                     inputparser.parse(inputcontext)
                     inputhandler.handle_draw(inputcontext)
-                    #tty.write(inputcontext.getvalue())
+                    #inputcontext.flush()
+                    stdout.flush()
                 if odata:
                     outputcontext.assign(odata)
                     outputparser.parse(outputcontext)
                     outputhandler.handle_draw(outputcontext)
-                    #stdout.write(outputcontext.getvalue())
-                stdout.flush()
+                    outputcontext.flush()
                 if edata:
-                    if resized:
-                        global resized
-                        resized = False
+                    if self._resized:
+                        self._resized = False
                         row, col = tty.fitsize()
                         inputhandler.handle_resize(inputcontext, row, col)
                         outputhandler.handle_resize(outputcontext, row, col)
+                        inputhandler.handle_draw(inputcontext)
+                        outputhandler.handle_draw(outputcontext)
                     else:
                         raise edata
         finally:

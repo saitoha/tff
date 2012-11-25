@@ -3,10 +3,15 @@
 from setuptools import setup, find_packages
 from tff import __version__, __license__, __author__, __doc__
 
+import inspect, os
+
+filename = inspect.getfile(inspect.currentframe())
+dirpath = os.path.abspath(os.path.dirname(inspect.getfile(inspect.currentframe())))
+
 setup(name                  = 'tff',
       version               = __version__,
       description           = 'Terminal Filter Framework',
-      long_description      = open("README.rst").read(),
+      long_description      = open(dirpath + "/README.rst").read(),
       py_modules            = ['tff'],
       eager_resources       = [],
       classifiers           = ['Development Status :: 4 - Beta',
