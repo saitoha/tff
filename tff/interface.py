@@ -44,7 +44,7 @@ class EventObserver:
         pass
 
     @abc.abstractmethod
-    def handle_csi(self, context, prefix, params, final):
+    def handle_csi(self, context, params, intermediate, final):
         pass
 
     @abc.abstractmethod
@@ -62,6 +62,10 @@ class EventObserver:
     @abc.abstractmethod
     def handle_draw(self, context):
         pass
+
+    #@abc.abstractmethod
+    #def handle_invalid(self, context, seq):
+    #    return False
 
     @abc.abstractmethod
     def handle_resize(self, context, row, col):
