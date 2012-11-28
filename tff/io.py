@@ -19,7 +19,7 @@
 # ***** END LICENSE BLOCK *****
 
 import sys, os, termios, pty, signal, fcntl, struct, select, errno
-import codecs
+import codecs, threading
 from interface import * # terminal filter framework interface
 from exception import *
 
@@ -139,8 +139,14 @@ class DefaultParser(Parser):
         self.__str = [] 
         self.__str_prefix = None 
         self.__str_esc_state = False
+        self.__timer = None
 
     def parse(self, context):
+
+        if self.__parse_state == _STATE_ESC:
+            if not self.__timer is None:
+                self.__timer.cancel()
+
         for c in context:
             if self.__parse_state == _STATE_OSC:
                 # parse control string
@@ -262,6 +268,12 @@ class DefaultParser(Parser):
             else:
                 context.dispatch_char(c)
 
+        if self.__parse_state == _STATE_ESC:
+            def dispatch_esc():
+                self.__parse_state = _STATE_GROUND
+                context.dispatch_char(0x1b)
+            self.__timer = threading.Timer(0.1, dispatch_esc)
+            self.__timer.start()
 
 ################################################################################
 #
@@ -345,6 +357,9 @@ class FilterMultiplexer(EventObserver):
         handled_lhs = self.__lhs.handle_char(context, c)
         handled_rhs = self.__rhs.handle_char(context, c)
         return handled_lhs and handled_rhs
+
+    def handle_invalid(self, context, seq):
+        return False
 
     def handle_draw(self, context):
         handled_lhs = self.__lhs.handle_draw(context)
@@ -654,7 +669,10 @@ class Session:
         def onresize(no, frame):
             if not self._resized:
                 self._resized = True
-        signal.signal(signal.SIGWINCH, onresize)
+        try:
+            signal.signal(signal.SIGWINCH, onresize)
+        except ValueError:
+            pass
 
         inputhandler.handle_start(inputcontext)
         outputhandler.handle_start(outputcontext)
