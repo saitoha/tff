@@ -179,9 +179,12 @@ class DefaultParser(Parser):
                 self.__esc_intermediate = []
                 self.__parse_state = _STATE_ESC
 
+            elif c == 0x18 or c == 0x1a:
+                context.dispatch_char(c)
+                self.__parse_state = _STATE_GROUND
+
             elif c < 0x20 or c == 0x7f: # control character
                 context.dispatch_char(c)
-                #self.__parse_state = _STATE_GROUND
 
             elif self.__parse_state == _STATE_ESC:
                 #
@@ -208,7 +211,7 @@ class DefaultParser(Parser):
                     self.__str = []
                     self.__str_prefix = c 
                     self.__parse_state = _STATE_STR
-                elif 0x20 <= c and c <= 0x2f: # SP to /
+                elif c <= 0x2f: # SP to /
                     self.__esc_intermediate.append(c)
                     self.__parse_state = _STATE_ESC_INTERMEDIATE
                 elif c <= 0x7e: # ~
@@ -219,10 +222,10 @@ class DefaultParser(Parser):
                     #raise ParseException("Unknown ESC seqnence detected.")
 
             elif self.__parse_state == _STATE_ESC_INTERMEDIATE:
-                if 0x20 <= c and c <= 0x2f: # SP to /
+                if c <= 0x2f: # SP to /
                     self.__esc_intermediate.append(c)
                     self.__parse_state = _STATE_ESC_INTERMEDIATE
-                elif 0x30 <= c and c <= 0x7e: # 0 to ~, Final byte
+                elif c <= 0x7e: # 0 to ~, Final byte
                     context.dispatch_esc(self.__esc_intermediate, c)
                     self.__parse_state = _STATE_GROUND
                 else:
@@ -234,12 +237,12 @@ class DefaultParser(Parser):
                 #
                 # CSI P ... P I ... I F
                 #     ^
-                if 0x30 <= c and c <= 0x3f: # parameter, 0 to ?
-                    self.__csi_parameter.append(c)
-                elif 0x20 <= c and c <= 0x2f: # intermediate, SP to /
+                if c <= 0x2f: # intermediate, SP to /
                     self.__csi_intermediate.append(c)
                     self.__parse_state = _STATE_CSI_INTERMEDIATE
-                elif 0x40 <= c and c <= 0x7e: # Final byte, @ to ~
+                elif c <= 0x3f: # parameter, 0 to ?
+                    self.__csi_parameter.append(c)
+                elif c <= 0x7e: # Final byte, @ to ~
                     context.dispatch_csi(self.__csi_parameter,
                                          self.__csi_intermediate,
                                          c)
@@ -253,18 +256,18 @@ class DefaultParser(Parser):
                 #
                 # CSI P ... P I ... I F
                 #             ^
-                if 0x20 <= c and c <= 0x2f: # intermediate, SP to /
+                if c <= 0x2f: # intermediate, SP to /
                     self.__csi_intermediate.append(c)
                     self.__parse_state = _STATE_CSI_INTERMEDIATE
-                elif 0x40 <= c and c <= 0x7e: # Final byte, @ to ~
+                elif c <= 0x3f:
+                    self.__parse_state = _STATE_GROUND
+                elif c <= 0x7e: # Final byte, @ to ~
                     context.dispatch_csi(self.__csi_parameter,
                                          self.__csi_intermediate,
                                          c)
                     self.__parse_state = _STATE_GROUND
                 else:
                     self.__parse_state = _STATE_GROUND
-                    #raise ParseException("Unknown CSI seqnence detected.")
-
             else:
                 context.dispatch_char(c)
 
@@ -420,9 +423,11 @@ class ParseContext(OutputStream, EventDispatcher):
     def put(self, c):
         if c < 0x80:
             self._output.write(chr(c))
-        elif c >= 0xd800 and c <= 0xdbff:
+        elif c < 0xd800:
+            self._output.write(unichr(c))
+        elif c < 0xdc00:
             self.__c1 = c
-        elif c >= 0xdc00 and c <= 0xdfff:
+        elif c < 0xe000:
             self._output.write(unichr(self.__c1) + unichr(c))
         elif c < 0x10000:
             self._output.write(unichr(c))
@@ -447,7 +452,10 @@ class ParseContext(OutputStream, EventDispatcher):
     def flush(self):
         if self._buffering:
             self._target_output.write(self._output)
-        self._target_output.flush()
+        try:
+            self._target_output.flush()
+        except IOError, e:
+            pass
 
 # EventDispatcher
     def dispatch_esc(self, intermediate, final):
@@ -680,28 +688,29 @@ class Session:
         outputhandler.handle_draw(outputcontext)
         inputcontext.flush()
         outputcontext.flush()
+        
         try:
             for idata, odata, edata in tty.drive():
                 if idata:
                     inputcontext.assign(idata)
                     inputparser.parse(inputcontext)
+                    inputhandler.handle_draw(outputcontext)
+                    outputhandler.handle_draw(outputcontext)
                     inputcontext.flush()
-                    stdout.flush()
+                    outputcontext.flush()
                 if odata:
                     outputcontext.assign(odata)
                     outputparser.parse(outputcontext)
-                if edata:
-                    if self._resized:
-                        self._resized = False
-                        row, col = tty.fitsize()
-                        inputhandler.handle_resize(inputcontext, row, col)
-                        outputhandler.handle_resize(outputcontext, row, col)
-                    else:
-                        raise edata
-                inputhandler.handle_draw(outputcontext)
-                outputhandler.handle_draw(outputcontext)
-                inputcontext.flush()
-                outputcontext.flush()
+                    inputhandler.handle_draw(outputcontext)
+                    outputhandler.handle_draw(outputcontext)
+                    inputcontext.flush()
+                    outputcontext.flush()
+                if self._resized:
+                    row, col = tty.fitsize()
+                    self._resized = False
+                    inputhandler.handle_resize(inputcontext, row, col)
+                    outputhandler.handle_resize(outputcontext, row, col)
+                    self._dirty = True
         finally:
             inputhandler.handle_end(inputcontext)
             outputhandler.handle_end(outputcontext)
