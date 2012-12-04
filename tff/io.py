@@ -161,6 +161,8 @@ class DefaultParser(Parser):
                     context.dispatch_control_string(self.__str_prefix, self.__str)
                     self.__parse_state = _STATE_GROUND
                 elif c < 0x20:
+                    seq = [0x1b] + [self.__str_prefix] + self.__str
+                    context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
                 else:
                     self.__str.append(c)
@@ -173,20 +175,11 @@ class DefaultParser(Parser):
                     context.dispatch_control_string(self.__str_prefix, self.__str)
                     self.__parse_state = _STATE_GROUND
                 elif c < 0x20:
+                    seq = [0x1b] + [self.__str_prefix] + self.__str
+                    context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
                 else:
                     self.__str.append(c)
-
-            elif c == 0x1b: # ESC
-                self.__esc_intermediate = []
-                self.__parse_state = _STATE_ESC
-
-            elif c == 0x18 or c == 0x1a:
-                context.dispatch_char(c)
-                self.__parse_state = _STATE_GROUND
-
-            elif c < 0x20 or c == 0x7f: # control character
-                context.dispatch_char(c)
 
             elif self.__parse_state == _STATE_ESC:
                 #
@@ -198,7 +191,19 @@ class DefaultParser(Parser):
                 #
                 #     ESC I ... I F
                 #
-                if c == 0x5b: # [
+                if c == 0x1b: # ESC
+                    seq = [0x1b]
+                    context.dispatch_invalid(seq)
+                    self.__esc_intermediate = []
+                    self.__parse_state = _STATE_ESC
+                elif c == 0x18 or c == 0x1a:
+                    seq = [0x1b]
+                    context.dispatch_invalid(seq)
+                    context.dispatch_char(c)
+                    self.__parse_state = _STATE_GROUND
+                elif c < 0x20: # control character
+                    context.dispatch_char(c)
+                elif c == 0x5b: # [
                     self.__csi_parameter = []
                     self.__csi_intermediate = [] 
                     self.__parse_state = _STATE_CSI_PARAMETER
@@ -223,37 +228,70 @@ class DefaultParser(Parser):
                 elif c <= 0x7e: # ~
                     context.dispatch_esc(self.__esc_intermediate, c)
                     self.__parse_state = _STATE_GROUND
+                elif c == 0x7f: # control character
+                    context.dispatch_char(c)
                 else:
+                    seq = [0x1b]
+                    context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
-                    #raise ParseException("Unknown ESC seqnence detected.")
 
             elif self.__parse_state == _STATE_ESC_INTERMEDIATE:
-                if c <= 0x2f: # SP to /
+                if c == 0x1b: # ESC
+                    seq = [0x1b] + self.__esc_intermediate
+                    context.dispatch_invalid(seq)
+                    self.__esc_intermediate = []
+                    self.__parse_state = _STATE_ESC
+                elif c == 0x18 or c == 0x1a:
+                    seq = [0x1b] + self.__esc_intermediate
+                    context.dispatch_invalid(seq)
+                    context.dispatch_char(c)
+                    self.__parse_state = _STATE_GROUND
+                elif c < 0x20: # control character
+                    context.dispatch_char(c)
+                elif c <= 0x2f: # SP to /
                     self.__esc_intermediate.append(c)
                     self.__parse_state = _STATE_ESC_INTERMEDIATE
                 elif c <= 0x7e: # 0 to ~, Final byte
                     context.dispatch_esc(self.__esc_intermediate, c)
                     self.__parse_state = _STATE_GROUND
+                elif c == 0x7f: # control character
+                    context.dispatch_char(c)
                 else:
+                    seq = [0x1b] + self.__esc_intermediate
+                    context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
-                    #raise ParseException("Unknown ESC seqnence detected.")
 
             elif self.__parse_state == _STATE_CSI_PARAMETER:
                 # parse control sequence
                 #
                 # CSI P ... P I ... I F
                 #     ^
-                if c <= 0x2f: # intermediate, SP to /
+                if c == 0x1b: # ESC
+                    seq = [0x1b, 0x5b] + self.__csi_parameter
+                    context.dispatch_invalid(seq)
+                    self.__esc_intermediate = []
+                    self.__parse_state = _STATE_ESC
+                elif c == 0x18 or c == 0x1a:
+                    seq = [0x1b, 0x5b] + self.__csi_parameter
+                    context.dispatch_invalid(seq)
+                    context.dispatch_char(c)
+                    self.__parse_state = _STATE_GROUND
+                elif c < 0x20: # control character
+                    context.dispatch_char(c)
+                elif c <= 0x2f: # intermediate, SP to /
                     self.__csi_intermediate.append(c)
                     self.__parse_state = _STATE_CSI_INTERMEDIATE
                 elif c <= 0x3f: # parameter, 0 to ?
                     self.__csi_parameter.append(c)
                 elif c <= 0x7e: # Final byte, @ to ~
                     context.dispatch_csi(self.__csi_parameter,
-                                         self.__csi_intermediate,
-                                         c)
+                                         self.__csi_intermediate, c)
                     self.__parse_state = _STATE_GROUND
+                elif c == 0x7f: # control character
+                    context.dispatch_char(c)
                 else:
+                    seq = [0x1b, 0x5b] + self.__csi_parameter
+                    context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
                     #raise ParseException("Unknown CSI seqnence detected.")
 
@@ -262,25 +300,76 @@ class DefaultParser(Parser):
                 #
                 # CSI P ... P I ... I F
                 #             ^
-                if c <= 0x2f: # intermediate, SP to /
+                if c == 0x1b: # ESC
+                    seq = [0x1b, 0x5b] + self.__csi_parameter + self.__csi_intermediate
+                    context.dispatch_invalid(seq)
+                    self.__esc_intermediate = []
+                    self.__parse_state = _STATE_ESC
+                elif c == 0x18 or c == 0x1a:
+                    seq = [0x1b, 0x5b] + self.__csi_parameter + self.__csi_intermediate
+                    context.dispatch_invalid(seq)
+                    context.dispatch_char(c)
+                    self.__parse_state = _STATE_GROUND
+                elif c < 0x20: # control character
+                    context.dispatch_char(c)
+                elif c <= 0x2f: # intermediate, SP to /
                     self.__csi_intermediate.append(c)
                     self.__parse_state = _STATE_CSI_INTERMEDIATE
                 elif c <= 0x3f:
+                    seq = [0x1b, 0x5b] + self.__csi_parameter + self.__csi_intermediate
+                    context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
                 elif c <= 0x7e: # Final byte, @ to ~
                     context.dispatch_csi(self.__csi_parameter,
                                          self.__csi_intermediate,
                                          c)
                     self.__parse_state = _STATE_GROUND
+                elif c == 0x7f: # control character
+                    context.dispatch_char(c)
                 else:
+                    seq = [0x1b, 0x5b] + self.__csi_parameter + self.__csi_intermediate
+                    context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
             elif self.__parse_state == _STATE_SS2:
-                context.dispatch_ss2(c)
-                self.__parse_state = _STATE_GROUND
+                if c == 0x1b: # ESC
+                    seq = [0x1b, 0x4e]
+                    context.dispatch_invalid(seq)
+                    self.__esc_intermediate = []
+                    self.__parse_state = _STATE_ESC
+                elif c == 0x18 or c == 0x1a:
+                    seq = [0x1b, 0x4e]
+                    context.dispatch_invalid(seq)
+                    context.dispatch_char(c)
+                    self.__parse_state = _STATE_GROUND
+                elif c < 0x20: # control character
+                    context.dispatch_char(c)
+                elif c < 0x7f:
+                    context.dispatch_ss2(c)
+                    self.__parse_state = _STATE_GROUND
+                elif c == 0x7f: # control character
+                    context.dispatch_char(c)
             elif self.__parse_state == _STATE_SS3:
-                context.dispatch_ss3(c)
-                self.__parse_state = _STATE_GROUND
-            else:
+                if c == 0x1b: # ESC
+                    seq = [0x1b, 0x4f]
+                    context.dispatch_invalid(seq)
+                    self.__esc_intermediate = []
+                    self.__parse_state = _STATE_ESC
+                elif c == 0x18 or c == 0x1a:
+                    seq = [0x1b, 0x4f]
+                    context.dispatch_invalid(seq)
+                    context.dispatch_char(c)
+                    self.__parse_state = _STATE_GROUND
+                elif c < 0x20: # control character
+                    context.dispatch_char(c)
+                elif c < 0x7f:
+                    context.dispatch_ss3(c)
+                    self.__parse_state = _STATE_GROUND
+                elif c == 0x7f: # control character
+                    context.dispatch_char(c)
+            elif c == 0x1b: # ESC
+                self.__esc_intermediate = []
+                self.__parse_state = _STATE_ESC
+            else: # control character
                 context.dispatch_char(c)
 
         if self.__parse_state == _STATE_ESC:
@@ -383,7 +472,9 @@ class FilterMultiplexer(EventObserver):
         return handled_lhs and handled_rhs
 
     def handle_invalid(self, context, seq):
-        return False
+        handled_lhs = self.__lhs.handle_invalid(context, seq)
+        handled_rhs = self.__rhs.handle_invalid(context, seq)
+        return handled_lhs and handled_rhs
 
     def handle_draw(self, context):
         handled_lhs = self.__lhs.handle_draw(context)
@@ -523,6 +614,11 @@ class ParseContext(OutputStream, EventDispatcher):
             #    self.put(c)
             #else: 
             self.put(c)
+
+    def dispatch_invalid(self, seq):
+        if not self.__handler.handle_invalid(self, seq):
+            for c in seq:
+                self.put(c)
 
 ################################################################################
 #
