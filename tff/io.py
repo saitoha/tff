@@ -111,8 +111,10 @@ _STATE_ESC = 1
 _STATE_ESC_INTERMEDIATE = 2
 _STATE_CSI_PARAMETER = 3
 _STATE_CSI_INTERMEDIATE = 4
-_STATE_OSC = 6
-_STATE_STR = 7 
+_STATE_SS2 = 6
+_STATE_SS3 = 7
+_STATE_OSC = 8
+_STATE_STR = 9 
 
 class _MockHandler:
 
@@ -205,6 +207,10 @@ class DefaultParser(Parser):
                     self.__str = [] 
                     self.__str_prefix = c 
                     self.__parse_state = _STATE_OSC
+                elif c == 0x4e: # N
+                    self.__parse_state = _STATE_SS2
+                elif c == 0x4f: # O
+                    self.__parse_state = _STATE_SS3
                 elif c == 0x50 or c == 0x58 or c == 0x5e or c == 0x5f:
                     # P(DCS) or X(SOS) or ^(PM) or _(APC)
                     self.__str_esc_state = False
@@ -268,6 +274,12 @@ class DefaultParser(Parser):
                     self.__parse_state = _STATE_GROUND
                 else:
                     self.__parse_state = _STATE_GROUND
+            elif self.__parse_state == _STATE_SS2:
+                context.dispatch_ss2(c)
+                self.__parse_state = _STATE_GROUND
+            elif self.__parse_state == _STATE_SS3:
+                context.dispatch_ss3(c)
+                self.__parse_state = _STATE_GROUND
             else:
                 context.dispatch_char(c)
 
@@ -294,10 +306,19 @@ class DefaultHandler(EventObserver):
     def handle_end(self, context):
         pass
 
+    def handle_esc(self, context, intermediate, final):
+        return False
+
     def handle_csi(self, context, parameter, intermediate, final):
         return False
 
-    def handle_esc(self, context, intermediate, final):
+    def handle_ss2(self, context, final):
+        return False
+
+    def handle_ss3(self, context, final):
+        return False
+
+    def handle_char(self, context, c):
         return False
 
     def handle_control_string(self, context, prefix, value):
@@ -473,6 +494,18 @@ class ParseContext(OutputStream, EventDispatcher):
                 self.put(c)
             for c in intermediate:
                 self.put(c)
+            self.put(final)
+
+    def dispatch_ss2(self, final):
+        if not self.__handler.handle_ss2(self, final):
+            self.put(0x1b) # ESC
+            self.put(0x4e) # N
+            self.put(final)
+
+    def dispatch_ss3(self, final):
+        if not self.__handler.handle_ss3(self, final):
+            self.put(0x1b) # ESC
+            self.put(0x4f) # O
             self.put(final)
 
     def dispatch_control_string(self, prefix, value):
