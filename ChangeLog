@@ -6,3 +6,7 @@
     * Support surrogate pair
     * Ignore unicode decoding error (do fall over decoding)
 
+2012-12-7 Hayaki Saito <user@zuse.jp>
+
+    * Fix parsing logic for string control sequenses
+
