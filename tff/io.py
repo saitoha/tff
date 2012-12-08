@@ -192,7 +192,7 @@ class DefaultParser(Parser):
                 elif c < 0x0e:
                     self.__str.append(c)
                 elif c == 0x1b:
-                    self.__parse_state = _STATE_STRING_ESC
+                    self.__parse_state = _STATE_STR_ESC
                 elif c < 0x20:
                     seq = [0x1b] + [self.__str_prefix] + self.__str + [c]
                     context.dispatch_invalid(seq)
