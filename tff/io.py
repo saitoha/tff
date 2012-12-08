@@ -106,15 +106,17 @@ class SimpleParser(Parser):
 #
 # Default Parser implementation
 #
-_STATE_GROUND = 0
-_STATE_ESC = 1
+_STATE_GROUND           = 0
+_STATE_ESC              = 1
 _STATE_ESC_INTERMEDIATE = 2
-_STATE_CSI_PARAMETER = 3
+_STATE_CSI_PARAMETER    = 3
 _STATE_CSI_INTERMEDIATE = 4
-_STATE_SS2 = 6
-_STATE_SS3 = 7
-_STATE_OSC = 8
-_STATE_STR = 9 
+_STATE_SS2              = 6
+_STATE_SS3              = 7
+_STATE_OSC              = 8
+_STATE_OSC_ESC          = 9
+_STATE_STR              = 10 
+_STATE_STR_ESC          = 11
 
 class _MockHandler:
 
@@ -140,7 +142,6 @@ class DefaultParser(Parser):
         self.__esc_intermediate = [] 
         self.__str = [] 
         self.__str_prefix = None 
-        self.__str_esc_state = False
         self.__timer = None
 
     def parse(self, context):
@@ -152,34 +153,64 @@ class DefaultParser(Parser):
         for c in context:
             if self.__parse_state == _STATE_OSC:
                 # parse control string
-                if c == 0x1b:
-                    self.__str_esc_state = True
-                elif c == 0x5c and self.__str_esc_state == True:
+                if c == 0x07:
                     context.dispatch_control_string(self.__str_prefix, self.__str)
                     self.__parse_state = _STATE_GROUND
-                elif c == 0x07:
-                    context.dispatch_control_string(self.__str_prefix, self.__str)
+                elif c < 0x08:
+                    seq = [0x1b] + [self.__str_prefix] + self.__str + [c]
+                    context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
+                elif c < 0x0e:
+                    self.__str.append(c)
+                elif c == 0x1b:
+                    self.__parse_state = _STATE_OSC_ESC
                 elif c < 0x20:
-                    seq = [0x1b] + [self.__str_prefix] + self.__str
+                    seq = [0x1b] + [self.__str_prefix] + self.__str + [c]
                     context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
                 else:
                     self.__str.append(c)
 
-            elif self.__parse_state == _STATE_STR:
+            elif self.__parse_state == _STATE_OSC_ESC:
                 # parse control string
-                if c == 0x1b:
-                    self.__str_esc_state = True
-                elif c == 0x5c and self.__str_esc_state == True:
+                if c == 0x5c:
                     context.dispatch_control_string(self.__str_prefix, self.__str)
                     self.__parse_state = _STATE_GROUND
+                else:
+                    seq = [0x1b] + [self.__str_prefix] + self.__str + [0x1b, c]
+                    context.dispatch_invalid(seq)
+                    self.__parse_state = _STATE_GROUND
+
+            elif self.__parse_state == _STATE_STR:
+                # parse control string
+                # 00/08 - 00/13, 02/00 - 07/14
+                #
+                if c < 0x08:
+                    seq = [0x1b] + [self.__str_prefix] + self.__str + [c]
+                    context.dispatch_invalid(seq)
+                    self.__parse_state = _STATE_GROUND
+                elif c < 0x0e:
+                    self.__str.append(c)
+                elif c == 0x1b:
+                    self.__parse_state = _STATE_STRING_ESC
                 elif c < 0x20:
-                    seq = [0x1b] + [self.__str_prefix] + self.__str
+                    seq = [0x1b] + [self.__str_prefix] + self.__str + [c]
                     context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
                 else:
                     self.__str.append(c)
+
+            elif self.__parse_state == _STATE_STR_ESC:
+                # parse control string
+                # 00/08 - 00/13, 02/00 - 07/14
+                #
+                if c == 0x5c:
+                    context.dispatch_control_string(self.__str_prefix, self.__str)
+                    self.__parse_state = _STATE_GROUND
+                else:
+                    seq = [0x1b] + [self.__str_prefix] + self.__str + [0x1b, c]
+                    context.dispatch_invalid(seq)
+                    self.__parse_state = _STATE_GROUND
 
             elif self.__parse_state == _STATE_ESC:
                 #
@@ -208,7 +239,6 @@ class DefaultParser(Parser):
                     self.__csi_intermediate = [] 
                     self.__parse_state = _STATE_CSI_PARAMETER
                 elif c == 0x5d: # ]
-                    self.__str_esc_state = False
                     self.__str = [] 
                     self.__str_prefix = c 
                     self.__parse_state = _STATE_OSC
@@ -218,7 +248,6 @@ class DefaultParser(Parser):
                     self.__parse_state = _STATE_SS3
                 elif c == 0x50 or c == 0x58 or c == 0x5e or c == 0x5f:
                     # P(DCS) or X(SOS) or ^(PM) or _(APC)
-                    self.__str_esc_state = False
                     self.__str = []
                     self.__str_prefix = c 
                     self.__parse_state = _STATE_STR
