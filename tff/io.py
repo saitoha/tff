@@ -785,10 +785,6 @@ class DefaultPTY(PTY):
                             data = self.read()
                             if data:
                                 yield None, data, None
-                except OSError, e:
-                    no, msg = e
-                    #if no == errno.EIO:
-                    return
                 except select.error, e:
                     no, msg = e
                     if no == errno.EINTR: # The call was interrupted by a signal
@@ -842,6 +838,16 @@ class Session:
         except ValueError:
             pass
 
+        self._closed = False
+
+        def onclose(no, frame):
+            if not self._closed:
+                self._closed = True
+        try:
+            signal.signal(signal.SIGCHLD, onclose)
+        except ValueError:
+            pass
+
         inputhandler.handle_start(inputcontext)
         outputhandler.handle_start(outputcontext)
         inputhandler.handle_draw(inputcontext)
@@ -865,6 +871,8 @@ class Session:
                     outputhandler.handle_draw(outputcontext)
                     inputcontext.flush()
                     outputcontext.flush()
+                if self._closed:
+                    return
                 if self._resized:
                     row, col = tty.fitsize()
                     self._resized = False
