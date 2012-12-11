@@ -838,11 +838,9 @@ class Session:
         except ValueError:
             pass
 
-        self._closed = False
-
         def onclose(no, frame):
-            if not self._closed:
-                self._closed = True
+            sys.exit(0)
+
         try:
             signal.signal(signal.SIGCHLD, onclose)
         except ValueError:
@@ -871,14 +869,18 @@ class Session:
                     outputhandler.handle_draw(outputcontext)
                     inputcontext.flush()
                     outputcontext.flush()
-                if self._closed:
-                    return
                 if self._resized:
                     row, col = tty.fitsize()
                     self._resized = False
                     inputhandler.handle_resize(inputcontext, row, col)
                     outputhandler.handle_resize(outputcontext, row, col)
                     self._dirty = True
+        except OSError, e:
+            no, msg = e
+            if no == errno.EIO:
+                return
+            else:
+                raise e
         finally:
             inputhandler.handle_end(inputcontext)
             outputhandler.handle_end(outputcontext)
