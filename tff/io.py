@@ -260,7 +260,7 @@ class DefaultParser(Parser):
                 elif c == 0x7f: # control character
                     context.dispatch_char(c)
                 else:
-                    seq = [0x1b]
+                    seq = [0x1b, c]
                     context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
 
@@ -286,7 +286,7 @@ class DefaultParser(Parser):
                 elif c == 0x7f: # control character
                     context.dispatch_char(c)
                 else:
-                    seq = [0x1b] + self.__ibytes
+                    seq = [0x1b] + self.__ibytes + [c]
                     context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
 
@@ -318,7 +318,7 @@ class DefaultParser(Parser):
                 elif c == 0x7f: # control character
                     context.dispatch_char(c)
                 else:
-                    seq = [0x1b, 0x5b] + self.__pbytes
+                    seq = [0x1b, 0x5b] + self.__pbytes + [c]
                     context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
                     #raise ParseException("Unknown CSI seqnence detected.")
@@ -334,7 +334,7 @@ class DefaultParser(Parser):
                     self.__ibytes = []
                     self.__parse_state = _STATE_ESC
                 elif c == 0x18 or c == 0x1a:
-                    seq = [0x1b, 0x5b] + self.__pbytes + self.__ibytes
+                    seq = [0x1b, 0x5b] + self.__pbytes + self.__ibytes + [c]
                     context.dispatch_invalid(seq)
                     context.dispatch_char(c)
                     self.__parse_state = _STATE_GROUND
@@ -342,9 +342,8 @@ class DefaultParser(Parser):
                     context.dispatch_char(c)
                 elif c <= 0x2f: # intermediate, SP to /
                     self.__ibytes.append(c)
-                    self.__parse_state = _STATE_CSI_INTERMEDIATE
                 elif c <= 0x3f:
-                    seq = [0x1b, 0x5b] + self.__pbytes + self.__ibytes
+                    seq = [0x1b, 0x5b] + self.__pbytes + self.__ibytes + [c]
                     context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
                 elif c <= 0x7e: # Final byte, @ to ~
@@ -353,7 +352,7 @@ class DefaultParser(Parser):
                 elif c == 0x7f: # control character
                     context.dispatch_char(c)
                 else:
-                    seq = [0x1b, 0x5b] + self.__pbytes + self.__ibytes
+                    seq = [0x1b, 0x5b] + self.__pbytes + self.__ibytes + [c]
                     context.dispatch_invalid(seq)
                     self.__parse_state = _STATE_GROUND
 
