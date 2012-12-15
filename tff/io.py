@@ -705,6 +705,8 @@ class DefaultPTY(PTY):
                   | termios.IGNCR 
                   | termios.ICRNL)
 
+        term[1] &= ~termios.ONLCR 
+
         ## c_lflag
         term[3] = term[3] &~ (termios.ECHO | termios.ICANON)
 
