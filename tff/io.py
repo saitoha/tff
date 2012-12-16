@@ -691,17 +691,6 @@ class DefaultPTY(PTY):
         if not pid:
             os.environ['TERM'] = term 
             os.environ['LANG'] = lang 
-
-            term = termios.tcgetattr(0)
-
-            # c_oflag
-            term[1] = backup[1]
-            #term[1] &= ~termios.ONLCR 
-            # c_cflag
-            #term[2] &= ~(termios.CSIZE | termios.PARENB)
-            #term[2] |= termios.CS8
-            
-            termios.tcsetattr(0, termios.TCSANOW, term)
             os.execlp('/bin/sh',
                       '/bin/sh', '-c',
                       'exec %s' % command)
@@ -724,17 +713,31 @@ class DefaultPTY(PTY):
         ## c_iflag
         #IUTF8 = 16384
         term[0] &= ~(termios.IGNBRK
-                  | termios.BRKINT
-                  | termios.PARMRK 
-                  | termios.ISTRIP
-                  | termios.INLCR
-                  | termios.IGNCR 
-                  | termios.ICRNL)
+                   | termios.BRKINT
+                   | termios.PARMRK 
+                   | termios.ISTRIP
+                   | termios.INLCR
+                   | termios.IGNCR 
+                   | termios.ICRNL
+                   | termios.IXON)
 
-        term[1] &= ~termios.ONLCR 
+        term[1] &= ~(termios.OPOST 
+                   | termios.ONLCR)
+
+        # c_cflag
+        c_cflag = term[2]
+        c_cflag &= ~(termios.CSIZE | termios.PARENB)
+        c_cflag |= termios.CS8
+        term[2] = c_cflag
 
         ## c_lflag
-        term[3] = term[3] &~ (termios.ECHO | termios.ICANON)
+        c_lflag = term[3]
+        c_lflag &= ~(termios.ECHO
+                   | termios.ECHONL
+                   | termios.ICANON
+                   | termios.ISIG
+                   | termios.IEXTEN)
+        term[3] = c_lflag
 
         # c_cc
         # this PTY is jast a filter, so it must not fire signals
