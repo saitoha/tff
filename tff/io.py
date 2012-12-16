@@ -158,7 +158,7 @@ class DefaultParser(Parser):
 
             if state == _STATE_GROUND:
                 if c == 0x1b: # ESC
-                    del ibytes[:]
+                    ibytes = []
                     state = _STATE_ESC
 
                 else: # control character
@@ -184,16 +184,20 @@ class DefaultParser(Parser):
                 elif c > 0x1f: # intermediate, SP to /
                     ibytes.append(c)
                     state = _STATE_CSI_INTERMEDIATE
+
+                # control chars
                 elif c == 0x1b: # ESC
                     seq = [0x1b, 0x5b] + pbytes
                     context.dispatch_invalid(seq)
-                    del ibytes[:]
+                    ibytes = []
                     state = _STATE_ESC
+
                 elif c == 0x18 or c == 0x1a: # CAN, SUB
                     seq = [0x1b, 0x5b] + pbytes
                     context.dispatch_invalid(seq)
                     context.dispatch_char(c)
                     state = _STATE_GROUND
+
                 else:
                     context.dispatch_char(c)
 
@@ -219,10 +223,12 @@ class DefaultParser(Parser):
                 elif c > 0x1f: # intermediate, SP to /
                     ibytes.append(c)
                     state = _STATE_CSI_INTERMEDIATE
+
+                # control chars
                 elif c == 0x1b: # ESC
                     seq = [0x1b, 0x5b] + pbytes + ibytes
                     context.dispatch_invalid(seq)
-                    del ibytes[:]
+                    ibytes = []
                     state = _STATE_ESC
                 elif c == 0x18 or c == 0x1a:
                     seq = [0x1b, 0x5b] + pbytes + ibytes
@@ -243,11 +249,10 @@ class DefaultParser(Parser):
                 #     ESC I ... I F
                 #
                 if c == 0x5b: # [
-                    del pbytes[:]
+                    pbytes = []
                     state = _STATE_CSI_PARAMETER
                 elif c == 0x5d: # ]
-                    del pbytes[:] 
-                    pbytes.append(c)
+                    pbytes = [c] 
                     state = _STATE_OSC
                 elif c == 0x4e: # N
                     state = _STATE_SS2
@@ -255,14 +260,13 @@ class DefaultParser(Parser):
                     state = _STATE_SS3
                 elif c == 0x50 or c == 0x58 or c == 0x5e or c == 0x5f:
                     # P(DCS) or X(SOS) or ^(PM) or _(APC)
-                    del pbytes[:]
-                    pbytes.append(c)
+                    pbytes = [c] 
                     state = _STATE_STR
                 elif c < 0x20: # control character
                     if c == 0x1b: # ESC
                         seq = [0x1b]
                         context.dispatch_invalid(seq)
-                        del ibytes[:]
+                        ibytes = []
                         state = _STATE_ESC
                     elif c == 0x18 or c == 0x1a:
                         seq = [0x1b]
@@ -301,7 +305,7 @@ class DefaultParser(Parser):
                 elif c == 0x1b: # ESC
                     seq = [0x1b] + ibytes
                     context.dispatch_invalid(seq)
-                    del ibytes[:]
+                    ibytes = []
                     state = _STATE_ESC
                 elif c == 0x18 or c == 0x1a:
                     seq = [0x1b] + ibytes
@@ -377,7 +381,7 @@ class DefaultParser(Parser):
                     if c == 0x1b: # ESC
                         seq = [0x1b, 0x4f]
                         context.dispatch_invalid(seq)
-                        del ibytes[:]
+                        ibytes = []
                         state = _STATE_ESC
                     elif c == 0x18 or c == 0x1a:
                         seq = [0x1b, 0x4f]
@@ -399,7 +403,7 @@ class DefaultParser(Parser):
                     if c == 0x1b: # ESC
                         seq = [0x1b, 0x4e]
                         context.dispatch_invalid(seq)
-                        del ibytes[:]
+                        ibytes = []
                         state = _STATE_ESC
                     elif c == 0x18 or c == 0x1a:
                         seq = [0x1b, 0x4e]
@@ -682,7 +686,7 @@ class DefaultPTY(PTY):
     def __init__(self, term, lang, command, stdin):
         self._stdin_fileno = stdin.fileno()
         backup = termios.tcgetattr(self._stdin_fileno)
-        self.__setupterm(self._stdin_fileno)
+        self._backup_termios = backup 
         pid, master = pty.fork()
         if not pid:
             os.environ['TERM'] = term 
@@ -702,16 +706,19 @@ class DefaultPTY(PTY):
                       '/bin/sh', '-c',
                       'exec %s' % command)
 
+        self.__setupterm(self._stdin_fileno)
         self.__pid = pid
         self._master = master
-    
+     
     def __del__(self):
+        self.restore()
+
+    def restore(self):
         termios.tcsetattr(self._stdin_fileno,
                           termios.TCSANOW,
                           self._backup_termios)
 
     def __setupterm(self, fd):
-        self._backup_termios = termios.tcgetattr(fd)
         term = termios.tcgetattr(fd)
 
         ## c_iflag
@@ -748,9 +755,9 @@ class DefaultPTY(PTY):
         termios.tcsetattr(fd, termios.TCSANOW, term)
 
     def __resize_impl(self, winsize):
-         fcntl.ioctl(self._master, termios.TIOCSWINSZ, winsize)
-         # notify Application process that terminal size has been changed.
-         os.kill(self.__pid, signal.SIGWINCH)
+        fcntl.ioctl(self._master, termios.TIOCSWINSZ, winsize)
+        # notify Application process that terminal size has been changed.
+        os.kill(self.__pid, signal.SIGWINCH)
 
     def fitsize(self):
          winsize = fcntl.ioctl(self._stdin_fileno, termios.TIOCGWINSZ, 'hhhh')
@@ -902,6 +909,7 @@ class Session:
             else:
                 raise e
         finally:
+            self.tty.restore()
             inputhandler.handle_end(inputcontext)
             outputhandler.handle_end(outputcontext)
 
