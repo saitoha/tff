@@ -189,7 +189,7 @@ class DefaultParser(Parser):
                     context.dispatch_invalid(seq)
                     del ibytes[:]
                     state = _STATE_ESC
-                elif c == 0x18 or c == 0x1a:
+                elif c == 0x18 or c == 0x1a: # CAN, SUB
                     seq = [0x1b, 0x5b] + pbytes
                     context.dispatch_invalid(seq)
                     context.dispatch_char(c)
@@ -246,8 +246,8 @@ class DefaultParser(Parser):
                     del pbytes[:]
                     state = _STATE_CSI_PARAMETER
                 elif c == 0x5d: # ]
+                    del pbytes[:] 
                     pbytes.append(c)
-                    del ibytes[:] 
                     state = _STATE_OSC
                 elif c == 0x4e: # N
                     state = _STATE_SS2
@@ -255,8 +255,8 @@ class DefaultParser(Parser):
                     state = _STATE_SS3
                 elif c == 0x50 or c == 0x58 or c == 0x5e or c == 0x5f:
                     # P(DCS) or X(SOS) or ^(PM) or _(APC)
+                    del pbytes[:]
                     pbytes.append(c)
-                    del ibytes[:]
                     state = _STATE_STR
                 elif c < 0x20: # control character
                     if c == 0x1b: # ESC
