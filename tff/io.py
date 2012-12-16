@@ -142,15 +142,12 @@ class DefaultParser(Parser):
         self.__state = _STATE_GROUND
         self.__pbytes = [] 
         self.__ibytes = [] 
-        self.__sbytes = [] 
-        self.__str_prefix = None 
         self.__timer = None
 
     def parse(self, context):
 
         pbytes = self.__pbytes
         ibytes = self.__ibytes
-        sbytes = self.__sbytes
         state = self.__state
 
         if self.__state == _STATE_ESC:
@@ -249,8 +246,8 @@ class DefaultParser(Parser):
                     del pbytes[:]
                     state = _STATE_CSI_PARAMETER
                 elif c == 0x5d: # ]
-                    del sbytes[:] 
-                    self.__str_prefix = c 
+                    pbytes.append(c)
+                    del ibytes[:] 
                     state = _STATE_OSC
                 elif c == 0x4e: # N
                     state = _STATE_SS2
@@ -258,8 +255,8 @@ class DefaultParser(Parser):
                     state = _STATE_SS3
                 elif c == 0x50 or c == 0x58 or c == 0x5e or c == 0x5f:
                     # P(DCS) or X(SOS) or ^(PM) or _(APC)
-                    del sbytes[:]
-                    self.__str_prefix = c 
+                    pbytes.append(c)
+                    del ibytes[:]
                     state = _STATE_STR
                 elif c < 0x20: # control character
                     if c == 0x1b: # ESC
@@ -283,7 +280,7 @@ class DefaultParser(Parser):
                 elif c == 0x7f: # control character
                     context.dispatch_char(c)
                 else:
-                    seq = [0x1b]
+                    seq = [0x1b, c]
                     context.dispatch_invalid(seq)
                     state = _STATE_GROUND
 
@@ -317,49 +314,49 @@ class DefaultParser(Parser):
             elif state == _STATE_OSC:
                 # parse control string
                 if c == 0x07:
-                    context.dispatch_control_string(self.__str_prefix, sbytes)
+                    context.dispatch_control_string(pbytes[0], ibytes)
                     state = _STATE_GROUND
                 elif c < 0x08:
-                    seq = [0x1b] + [self.__str_prefix] + sbytes + [c]
+                    seq = [0x1b] + pbytes + ibytes + [c]
                     context.dispatch_invalid(seq)
                     state = _STATE_GROUND
                 elif c < 0x0e:
-                    sbytes.append(c)
+                    ibytes.append(c)
                 elif c == 0x1b:
                     state = _STATE_OSC_ESC
                 elif c < 0x20:
-                    seq = [0x1b] + [self.__str_prefix] + sbytes + [c]
+                    seq = [0x1b] + pbytes + ibytes + [c]
                     context.dispatch_invalid(seq)
                     state = _STATE_GROUND
                 else:
-                    sbytes.append(c)
+                    ibytes.append(c)
 
             elif state == _STATE_STR:
                 # parse control string
                 # 00/08 - 00/13, 02/00 - 07/14
                 #
                 if c < 0x08:
-                    seq = [0x1b] + [self.__str_prefix] + sbytes + [c]
+                    seq = [0x1b] + pbytes + ibytes + [c]
                     context.dispatch_invalid(seq)
                     state = _STATE_GROUND
                 elif c < 0x0e:
-                    sbytes.append(c)
+                    ibytes.append(c)
                 elif c == 0x1b:
                     state = _STATE_STR_ESC
                 elif c < 0x20:
-                    seq = [0x1b] + [self.__str_prefix] + sbytes + [c]
+                    seq = [0x1b] + pbytes + ibytes + [c]
                     context.dispatch_invalid(seq)
                     state = _STATE_GROUND
                 else:
-                    sbytes.append(c)
+                    ibytes.append(c)
 
             elif state == _STATE_OSC_ESC:
                 # parse control string
                 if c == 0x5c:
-                    context.dispatch_control_string(self.__str_prefix, sbytes)
+                    context.dispatch_control_string(pbytes[0], ibytes)
                     state = _STATE_GROUND
                 else:
-                    seq = [0x1b] + [self.__str_prefix] + sbytes + [0x1b, c]
+                    seq = [0x1b] + pbytes + ibytes + [0x1b, c]
                     context.dispatch_invalid(seq)
                     state = _STATE_GROUND
 
@@ -368,10 +365,10 @@ class DefaultParser(Parser):
                 # 00/08 - 00/13, 02/00 - 07/14
                 #
                 if c == 0x5c:
-                    context.dispatch_control_string(self.__str_prefix, sbytes)
+                    context.dispatch_control_string(pbytes[0], ibytes)
                     state = _STATE_GROUND
                 else:
-                    seq = [0x1b] + [self.__str_prefix] + sbytes + [0x1b, c]
+                    seq = [0x1b] + pbytes + ibytes + [0x1b, c]
                     context.dispatch_invalid(seq)
                     state = _STATE_GROUND
 
@@ -421,7 +418,6 @@ class DefaultParser(Parser):
 
         self.__pbytes = pbytes
         self.__ibytes = ibytes
-        self.__sbytes = sbytes
         self.__state = state
 
         # set ESC timer
@@ -727,6 +723,8 @@ class DefaultPTY(PTY):
                   | termios.INLCR
                   | termios.IGNCR 
                   | termios.ICRNL)
+
+        term[1] &= ~termios.ONLCR 
 
         ## c_lflag
         term[3] = term[3] &~ (termios.ECHO | termios.ICANON)
