@@ -20,9 +20,9 @@
 
 # terminal filter framework
 __author__  = "Hayaki Saito (user@zuse.jp)"
-__version__ = "0.1.2"
+__version__ = "0.1.5"
 __license__ = "GPL v3"
 
 from interface import *
-from io import *
+from tff import *
 
