@@ -24,7 +24,7 @@ from interface import * # terminal filter framework interface
 from exception import *
 
 _BUFFER_SIZE = 8192
-_ESC_TIMEOUT = 0.1 # sec
+_ESC_TIMEOUT = 0.5 # sec
 
 ################################################################################
 #
@@ -681,19 +681,6 @@ class DefaultPTY(PTY):
         if not pid:
             os.environ['TERM'] = term 
             os.environ['LANG'] = lang 
-<<<<<<< HEAD:tff/io.py
-=======
-
-            term = termios.tcgetattr(0)
-
-            # c_oflag
-            term[1] = backup[1]
-            #term[1] &= ~termios.ONLCR 
-            # c_cflag
-            #term[2] &= ~(termios.CSIZE | termios.PARENB)
-            #term[2] |= termios.CS8
-            termios.tcsetattr(0, termios.TCSANOW, term)
->>>>>>> 9d99c5d68663e8f0b2c6f3a58bf4ac37ada04e37:tff/tff.py
             os.execlp('/bin/sh',
                       '/bin/sh', '-c',
                       'exec %s' % command)
