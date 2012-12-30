@@ -24,7 +24,7 @@ from interface import * # terminal filter framework interface
 from exception import *
 
 _BUFFER_SIZE = 8192
-_ESC_TIMEOUT = 0.1 # sec
+_ESC_TIMEOUT = 0.8 # sec
 
 ################################################################################
 #
@@ -141,14 +141,19 @@ class DefaultParser(Parser):
         self.__pbytes = [] 
         self.__ibytes = [] 
 
+    def init(self, context):
+        self.__context = context
+
     def state_is_esc(self):
         return self.__state == _STATE_ESC
 
     def reset(self):
         self.__state = _STATE_GROUND
 
-    def parse(self, context):
+    def parse(self, data):
 
+        context = self.__context
+        context.assign(data)
         pbytes = self.__pbytes
         ibytes = self.__ibytes
         state = self.__state
@@ -653,9 +658,6 @@ class ParseContext(OutputStream, EventDispatcher):
 
     def dispatch_char(self, c):
         if not self.__handler.handle_char(self, c):
-            #if c < 0x20 or c == 0x7f:
-            #    self.put(c)
-            #else: 
             self.put(c)
 
     def dispatch_invalid(self, seq):
@@ -696,13 +698,17 @@ class DefaultPTY(PTY):
                       'exec %s' % command)
 
         self.__setupterm(self._stdin_fileno)
-        self.__pid = pid
+        self.pid = pid
         self._master = master
      
     def __del__(self):
-        self.restore()
+        self.close()
 
-    def restore(self):
+    def close(self):
+        self.restore_term()
+        os.close(self._master)
+
+    def restore_term(self):
         termios.tcsetattr(self._stdin_fileno,
                           termios.TCSANOW,
                           self._backup_termios)
@@ -730,6 +736,7 @@ class DefaultPTY(PTY):
         vdisable = os.fpathconf(self._stdin_fileno, 'PC_VDISABLE')
         VDSUSP = 11
         c_cc = term[6]
+        c_cc[termios.VEOF]     = vdisable  # Ctrl-D
         c_cc[termios.VINTR]    = vdisable  # Ctrl-C
         c_cc[termios.VREPRINT] = vdisable  # Ctrl-R
         c_cc[termios.VSTART]   = vdisable  # Ctrl-Q
@@ -746,7 +753,7 @@ class DefaultPTY(PTY):
     def __resize_impl(self, winsize):
         fcntl.ioctl(self._master, termios.TIOCSWINSZ, winsize)
         # notify Application process that terminal size has been changed.
-        os.kill(self.__pid, signal.SIGWINCH)
+        os.kill(self.pid, signal.SIGWINCH)
 
     def fitsize(self):
          winsize = fcntl.ioctl(self._stdin_fileno, termios.TIOCGWINSZ, 'hhhh')
@@ -761,6 +768,9 @@ class DefaultPTY(PTY):
 
     def fileno(self):
         return self._master
+
+    def stdin_fileno(self):
+        return self._stdin_fileno
 
     def read(self):
         return os.read(self._master, _BUFFER_SIZE)
@@ -780,36 +790,6 @@ class DefaultPTY(PTY):
         #fcntl.ioctl(self._master, termios.TIOCSTART, 0)
         termios.tcflow(self._master, termios.TCOON)
 
-    def drive(self):
-        master = self._master
-        stdin_fileno = self._stdin_fileno
-        rfds = [stdin_fileno, master]
-        wfds = []
-        xfds = [stdin_fileno, master]
-        try:
-            while True: 
-                try:
-                    rfd, wfd, xfd = select.select(rfds, wfds, xfds)
-                    if xfd:
-                        break
-                    for fd in rfd:
-                        if fd == stdin_fileno:
-                            data = os.read(stdin_fileno, _BUFFER_SIZE)
-                            if data:
-                                yield data, None, None
-                        elif fd == master:
-                            data = self.read()
-                            if data:
-                                yield None, data, None
-                except select.error, e:
-                    no, msg = e
-                    if no == errno.EINTR: # The call was interrupted by a signal
-                        yield None, None, e
-                    else:
-                        raise e
-        finally:
-            os.close(master)
-
 
  
 ################################################################################
@@ -818,8 +798,178 @@ class DefaultPTY(PTY):
 #
 class Session:
 
+    _input_target_is_main = True
+
     def __init__(self, tty):
         self.tty = tty
+        self.subtty = None
+
+    def switch_input_target(self):
+        if self.subtty:
+            self._input_target_is_main = not self._input_target_is_main
+        else:
+            self._input_target_is_main = True 
+
+    def add_subtty(self, term, termenc, command, row, col):
+        if self.subtty:
+            self.subtty.close()
+            self.subtty = None
+
+        self.tty.restore_term()
+        subtty = DefaultPTY(term, termenc, command, sys.stdin)
+        subtty.resize(12, 30)
+        self.subtty = subtty
+
+    def process_input(self, data):
+        if not self._esc_timer is None:
+            self._esc_timer.cancel()
+            self._esc_timer = None
+
+        self._inputparser.parse(data)
+
+        # set ESC timer
+        if not self._inputparser.state_is_esc():
+            self._inputhandler.handle_draw(self._outputcontext)
+            self._outputhandler.handle_draw(self._outputcontext)
+            #self._inputcontext.flush()
+            self._outputcontext.flush()
+        else:
+            def dispatch_esc():
+                self._inputparser.reset()
+                self._inputcontext.dispatch_char(0x1b)
+                self._inputhandler.handle_draw(self._outputcontext)
+                self._outputhandler.handle_draw(self._outputcontext)
+                #self._inputcontext.flush()
+                self._outputcontext.flush()
+            self._esc_timer = threading.Timer(_ESC_TIMEOUT, dispatch_esc)
+            self._esc_timer.start()
+
+    def process_start(self):
+        self._inputhandler.handle_start(self._inputcontext)
+        self._outputhandler.handle_start(self._outputcontext)
+        self._inputhandler.handle_draw(self._outputcontext)
+        self._outputhandler.handle_draw(self._outputcontext)
+        #self._inputcontext.flush()
+        self._outputcontext.flush()
+
+    def process_end(self):
+        self._inputhandler.handle_end(self._inputcontext)
+        self._outputhandler.handle_end(self._outputcontext)
+
+    def process_output(self, data):
+        self._outputparser.parse(data)
+        self._inputhandler.handle_draw(self._outputcontext)
+        self._outputhandler.handle_draw(self._outputcontext)
+        #self._inputcontext.flush()
+        self._outputcontext.flush()
+
+    def process_resize(self, row, col):
+        try:
+            self._inputhandler.handle_resize(self._inputcontext, row, col)
+            self._outputhandler.handle_resize(self._outputcontext, row, col)
+        finally:
+            self._resized = False
+
+    def drive(self):
+       
+        def onresize(no, frame):
+            self._resized = True
+        try:
+            signal.signal(signal.SIGWINCH, onresize)
+        except ValueError:
+            pass
+
+        main_master = self.tty.fileno()
+        stdin_fileno = self.tty.stdin_fileno()
+        rfds = [stdin_fileno, main_master]
+        wfds = []
+        xfds = [stdin_fileno, main_master]
+        self._resized = False
+
+        sub_master = None
+        if self.subtty:
+            sub_master = self.subtty.fileno()
+            rfds.append(sub_master)
+            xfds.append(sub_master)
+ 
+        try:
+            while True: 
+
+                try:
+                    if self._resized:
+                        row, col = self.tty.fitsize()
+                        self.process_resize(row, col)
+                        self._resized = False
+                    rfd, wfd, xfd = select.select(rfds, wfds, xfds)
+                    if xfd:
+                        for fd in xfd:
+                            if fd == main_master:
+                                return
+                            elif fd == stdin_fileno:
+                                return
+                            elif fd == sub_master:
+                                self._input_target_is_main = True
+                                rfds.remove(fd)
+                                xfds.remove(fd)
+                                self.subtty = None
+                                sub_master = None
+                                rfds = [stdin_fileno, main_master]
+                                wfds = []
+                                xfds = [stdin_fileno, main_master]
+                            else:
+                                return
+                    for fd in rfd:
+                        if fd == main_master:
+                            data = self.tty.read()
+                            self.process_output(data)
+                        elif fd == stdin_fileno:
+                            data = os.read(stdin_fileno, _BUFFER_SIZE)
+                            if self._input_target_is_main:
+                                self.process_input(data)
+                            elif data == "\x1a":
+                                self.switch_input_target()
+                                self._input_target_is_main = True
+                            elif self.subtty:
+                                self.subtty.write(data)
+                                self.process_input("")
+                            else:
+                                self._input_target_is_main = True
+                                #return
+                        elif fd == sub_master:
+                            data = self.subtty.read()
+                            self._subprocess_outputparser.parse(data)
+                            self.process_output("")
+                except select.error, e:
+                    no, msg = e
+                    self._input_target_is_main = True
+                    if no == errno.EINTR: # The call was interrupted by a signal
+                        self._resized = True
+                    elif no == errno.EBADF:
+                        self._input_target_is_main = True
+                        rfds.remove(sub_master)
+                        xfds.remove(sub_master)
+                        self.subtty = None
+                        sub_master = None
+                        main_master = self.tty.fileno()
+                        stdin_fileno = self.tty.stdin_fileno()
+                        rfds = [stdin_fileno, main_master]
+                        wfds = []
+                        xfds = [stdin_fileno, main_master]
+                    else:
+                        raise e
+        except OSError, e:
+            no, msg = e
+            if no == errno.EIO:
+                return
+            else:
+                raise e
+        finally:
+            try:
+                self.process_end()
+            finally:
+                self.tty.close()
+                if self.subtty:
+                    self.subtty.close()
 
     def start(self,
               termenc,
@@ -831,9 +981,11 @@ class Session:
               outputscanner=DefaultScanner(),
               outputparser=DefaultParser(),
               outputhandler=DefaultHandler(),
+              subprocess_outputhandler=None,
               buffering=False):
  
         tty = self.tty
+
         inputcontext = ParseContext(output=tty,
                                     termenc=termenc,
                                     scanner=inputscanner,
@@ -844,86 +996,43 @@ class Session:
                                      scanner=outputscanner,
                                      handler=outputhandler,
                                      buffering=buffering)
+        inputparser.init(inputcontext)
+        outputparser.init(outputcontext)
+
         self._resized = False
 
-        def onresize(no, frame):
-            if not self._resized:
-                self._resized = True
-        try:
-            signal.signal(signal.SIGWINCH, onresize)
-        except ValueError:
-            pass
-
         def onclose(no, frame):
-            sys.exit(0)
+            pid, status = os.wait()
+            if pid == self.tty.pid:
+                sys.exit(0)
+            return False
+            #signal.signal(signal.SIGCHLD, onclose)
+            #else:
+            #    self._input_target_is_main = True
+            #    self.subtty = None
 
-        try:
-            signal.signal(signal.SIGCHLD, onclose)
-        except ValueError:
-            pass
+        #signal.signal(signal.SIGCHLD, onclose)
 
-        inputhandler.handle_start(inputcontext)
-        outputhandler.handle_start(outputcontext)
-        inputhandler.handle_draw(inputcontext)
-        outputhandler.handle_draw(outputcontext)
-        inputcontext.flush()
-        outputcontext.flush()
-        esc_timer = None    
-        try:
-            for idata, odata, edata in tty.drive():
+        if subprocess_outputhandler:
+            subprocess_outputcontext = ParseContext(output=stdout,
+                                                    termenc=termenc,
+                                                    scanner=outputscanner,
+                                                    handler=subprocess_outputhandler,
+                                                    buffering=buffering)
+            self._subprocess_outputhandler = subprocess_outputhandler
+            self._subprocess_outputcontext = subprocess_outputcontext
+            self._subprocess_outputparser = DefaultParser()
+            self._subprocess_outputparser.init(self._subprocess_outputcontext)
 
-                if self._resized:
-                    row, col = tty.fitsize()
-                    self._resized = False
-                    inputhandler.handle_resize(inputcontext, row, col)
-                    outputhandler.handle_resize(outputcontext, row, col)
-                    self._dirty = True
+        self._inputhandler = inputhandler
+        self._outputhandler = outputhandler
+        self._inputcontext = inputcontext
+        self._outputcontext = outputcontext
+        self._inputparser = inputparser
+        self._outputparser = outputparser
 
-                if not idata is None:
-
-                    if not esc_timer is None:
-                        esc_timer.cancel()
-                        esc_timer = None
-
-                    inputcontext.assign(idata)
-                    inputparser.parse(inputcontext)
-
-                    # set ESC timer
-                    if not inputparser.state_is_esc():
-                        inputhandler.handle_draw(outputcontext)
-                        outputhandler.handle_draw(outputcontext)
-                        inputcontext.flush()
-                        outputcontext.flush()
-                    else:
-                        def dispatch_esc():
-                            inputparser.reset()
-                            inputcontext.dispatch_char(0x1b)
-                            inputhandler.handle_draw(outputcontext)
-                            outputhandler.handle_draw(outputcontext)
-                            inputcontext.flush()
-                            outputcontext.flush()
-                        esc_timer = threading.Timer(_ESC_TIMEOUT, dispatch_esc)
-                        esc_timer.start()
-
-                elif not odata is None:
-                    outputcontext.assign(odata)
-                    outputparser.parse(outputcontext)
-                    inputhandler.handle_draw(outputcontext)
-                    outputhandler.handle_draw(outputcontext)
-                    inputcontext.flush()
-                    outputcontext.flush()
-
-        except OSError, e:
-            no, msg = e
-            if no == errno.EIO:
-                return
-            else:
-                raise e
-        finally:
-            self.tty.restore()
-            inputhandler.handle_end(inputcontext)
-            outputhandler.handle_end(outputcontext)
-
+        self._esc_timer = None    
+        self.drive()
 
 def _test():
     import doctest
