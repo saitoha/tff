@@ -484,6 +484,12 @@ class FilterMultiplexer(EventObserver):
         self.__lhs = lhs
         self.__rhs = rhs
 
+    def get_lhs(self):
+        return self.__lhs
+
+    def get_rhs(self):
+        return self.__rhs
+
     def handle_start(self, context):
         handled_lhs = self.__lhs.handle_start(context)
         handled_rhs = self.__rhs.handle_start(context)
@@ -573,6 +579,9 @@ class ParseContext(OutputStream, EventDispatcher):
         self.__scanner.assign(data, self.__termenc)
         if self._buffering:
             self._output.truncate(0)
+
+    def sethandler(self, handler):
+        self.__handler = handler
 
     def putu(self, data):
         self._output.write(data)
@@ -691,9 +700,6 @@ class DefaultPTY(PTY):
         self.pid = pid
         self._master = master
      
-    def __del__(self):
-        self.close()
-
     def close(self):
         self.restore_term()
         os.close(self._master)
@@ -807,6 +813,12 @@ class Session:
     def __init__(self, tty):
         self.tty = tty
         self.subtty = None
+        main_master = self.tty.fileno()
+        stdin_fileno = self.tty.stdin_fileno()
+        self._rfds = [stdin_fileno, main_master]
+        self._wfds = []
+        self._xfds = [stdin_fileno, main_master]
+        self._resized = False
 
     def switch_input_target(self):
         if self.subtty:
@@ -814,15 +826,50 @@ class Session:
         else:
             self._input_target_is_main = True 
 
-    def add_subtty(self, term, termenc, command, row, col):
+    def add_subtty(self,
+                   term,
+                   lang,
+                   command,
+                   row,
+                   col,
+                   termenc,
+                   inputhandler,
+                   outputhandler,
+                   listener):
+
         if self.subtty:
             self.subtty.close()
             self.subtty = None
 
         self.tty.restore_term()
-        subtty = DefaultPTY(term, termenc, command, sys.stdin)
-        subtty.resize(12, 30)
+        subtty = DefaultPTY(term, lang, command, sys.stdin)
+        subtty.resize(row, col)
         self.subtty = subtty
+
+        sub_master = subtty.fileno()
+        self._rfds.append(sub_master)
+        self._xfds.append(sub_master)
+
+        inputcontext = ParseContext(output=subtty,
+                                    termenc=termenc,
+                                    scanner=DefaultScanner(),
+                                    handler=inputhandler,
+                                    buffering=False)
+        outputcontext = ParseContext(output=sys.stdout,
+                                     termenc=termenc,
+                                     scanner=DefaultScanner(),
+                                     handler=outputhandler,
+                                     buffering=False)
+        self._subprocess_inputhandler = inputhandler
+        self._subprocess_outputhandler = outputhandler
+        self._subprocess_inputcontext = inputcontext
+        self._subprocess_outputcontext = outputcontext
+        self._subprocess_inputparser = DefaultParser()
+        self._subprocess_outputparser = DefaultParser()
+        self._subprocess_listener =listener
+        self._subprocess_inputparser.init(inputcontext)
+        self._subprocess_outputparser.init(outputcontext)
+        listener.handle_start(outputcontext)
 
     def process_input(self, data):
         if not self._esc_timer is None:
@@ -874,6 +921,17 @@ class Session:
         finally:
             self._resized = False
 
+    def destruct_subprocess(self):
+        if self.subtty:
+            self._subprocess_listener.handle_end(self._subprocess_outputcontext)
+            self._input_target_is_main = True
+            sub_master = self.subtty.fileno()
+            self._rfds.remove(sub_master)
+            self._xfds.remove(sub_master)
+            self._subtty = self.subtty
+            self.process_output("")
+            self.subtty = None
+
     def drive(self):
        
         def onresize(no, frame):
@@ -882,46 +940,30 @@ class Session:
             signal.signal(signal.SIGWINCH, onresize)
         except ValueError:
             pass
-
+ 
         main_master = self.tty.fileno()
         stdin_fileno = self.tty.stdin_fileno()
-        rfds = [stdin_fileno, main_master]
-        wfds = []
-        xfds = [stdin_fileno, main_master]
-        self._resized = False
-
-        sub_master = None
-        if self.subtty:
-            sub_master = self.subtty.fileno()
-            rfds.append(sub_master)
-            xfds.append(sub_master)
- 
         try:
             while True: 
 
                 try:
-                    if self._resized:
-                        row, col = self.tty.fitsize()
-                        self.process_resize(row, col)
-                        self._resized = False
-                    rfd, wfd, xfd = select.select(rfds, wfds, xfds)
+                    rfd, wfd, xfd = select.select(self._rfds,
+                                                  self._wfds,
+                                                  self._xfds)
                     if xfd:
                         for fd in xfd:
                             if fd == main_master:
                                 return
                             elif fd == stdin_fileno:
                                 return
-                            elif fd == sub_master:
-                                self._input_target_is_main = True
-                                rfds.remove(fd)
-                                xfds.remove(fd)
-                                self.subtty = None
-                                sub_master = None
-                                rfds = [stdin_fileno, main_master]
-                                wfds = []
-                                xfds = [stdin_fileno, main_master]
+                            elif fd == self.subtty.fileno():
+                                self.destruct_subprocess()
                             else:
                                 return
+                    if self._resized:
+                        self._resized = False
+                        row, col = self.tty.fitsize()
+                        self.process_resize(row, col)
                     for fd in rfd:
                         if fd == main_master:
                             data = self.tty.read()
@@ -930,16 +972,12 @@ class Session:
                             data = os.read(stdin_fileno, _BUFFER_SIZE)
                             if self._input_target_is_main:
                                 self.process_input(data)
-                            elif data == "\x1a":
-                                self.switch_input_target()
-                                self._input_target_is_main = True
                             elif self.subtty:
-                                self.subtty.write(data)
+                                self._subprocess_inputparser.parse(data)
                                 self.process_input("")
                             else:
                                 self._input_target_is_main = True
-                                #return
-                        elif fd == sub_master:
+                        elif self.subtty and fd == self.subtty.fileno():
                             data = self.subtty.read()
                             self._subprocess_outputparser.parse(data)
                             self.process_output("")
@@ -949,21 +987,14 @@ class Session:
                     if no == errno.EINTR: # The call was interrupted by a signal
                         self._resized = True
                     elif no == errno.EBADF:
-                        self._input_target_is_main = True
-                        rfds.remove(sub_master)
-                        xfds.remove(sub_master)
-                        self.subtty = None
-                        sub_master = None
-                        main_master = self.tty.fileno()
-                        stdin_fileno = self.tty.stdin_fileno()
-                        rfds = [stdin_fileno, main_master]
-                        wfds = []
-                        xfds = [stdin_fileno, main_master]
+                        self.destruct_subprocess()
                     else:
                         raise e
         except OSError, e:
             no, msg = e
             if no == errno.EIO:
+                return
+            elif no == errno.EBADF:
                 return
             else:
                 raise e
@@ -985,7 +1016,6 @@ class Session:
               outputscanner=DefaultScanner(),
               outputparser=DefaultParser(),
               outputhandler=DefaultHandler(),
-              subprocess_outputhandler=None,
               buffering=False):
  
         tty = self.tty
@@ -1009,24 +1039,10 @@ class Session:
             pid, status = os.wait()
             if pid == self.tty.pid:
                 sys.exit(0)
-            return False
-            #signal.signal(signal.SIGCHLD, onclose)
-            #else:
-            #    self._input_target_is_main = True
-            #    self.subtty = None
+            self._input_target_is_main = True
+            #self.subtty = None
 
-        #signal.signal(signal.SIGCHLD, onclose)
-
-        if subprocess_outputhandler:
-            subprocess_outputcontext = ParseContext(output=stdout,
-                                                    termenc=termenc,
-                                                    scanner=outputscanner,
-                                                    handler=subprocess_outputhandler,
-                                                    buffering=buffering)
-            self._subprocess_outputhandler = subprocess_outputhandler
-            self._subprocess_outputcontext = subprocess_outputcontext
-            self._subprocess_outputparser = DefaultParser()
-            self._subprocess_outputparser.init(self._subprocess_outputcontext)
+        signal.signal(signal.SIGCHLD, onclose)
 
         self._inputhandler = inputhandler
         self._outputhandler = outputhandler
