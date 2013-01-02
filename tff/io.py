@@ -416,17 +416,17 @@ class DefaultParser(Parser):
                     context.dispatch_invalid(seq)
                     context.dispatch_char(c)
 
-        self.__pbytes = pbytes
-        self.__ibytes = ibytes
-        self.__state = state
-
         # set ESC timer
-        if self.__state == _STATE_ESC:
+        if state == _STATE_ESC:
             def dispatch_esc():
                 self.__state = _STATE_GROUND
                 context.dispatch_char(0x1b)
             self.__timer = threading.Timer(self.esc_timeout, dispatch_esc)
             self.__timer.start()
+
+        self.__pbytes = pbytes
+        self.__ibytes = ibytes
+        self.__state = state
 
 ################################################################################
 #

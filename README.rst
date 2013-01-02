@@ -54,3 +54,21 @@ Exported Classes
 
 Comming soon...
 
+Dependents
+----------
+
+ - canossa 
+   https://github.com/saitoha/canossa
+
+ - sentimental-skk
+   https://github.com/saitoha/sentimental-skk
+
+ - drcsterm 
+   https://github.com/saitoha/drcsterm
+
+ - sixelterm 
+   https://github.com/saitoha/sixelterm
+
+ - jacot 
+   https://github.com/saitoha/jacot
+
