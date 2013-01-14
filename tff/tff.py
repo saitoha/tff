@@ -561,10 +561,10 @@ class ParseContext(OutputStream, EventDispatcher):
         if buffering:
             try:
                 from cStringIO import StringIO
-            except:
+            except ImportError:
                 try:
                     from StringIO import StringIO
-                except:
+                except ImportError:
                     from io import StringIO
             self._output = codecs.getwriter(termenc)(StringIO())
         else:
