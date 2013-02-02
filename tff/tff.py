@@ -827,6 +827,7 @@ class DefaultPTY(PTY):
 class Session:
 
     _input_target_is_main = True
+    _alive = True
 
     def __init__(self, tty):
         self.tty = tty
@@ -963,7 +964,7 @@ class Session:
         main_master = self.tty.fileno()
         stdin_fileno = self.tty.stdin_fileno()
         try:
-            while True:
+            while self._alive:
 
                 try:
                     rfd, wfd, xfd = select.select(self._rfds,
@@ -1058,7 +1059,7 @@ class Session:
         def onclose(no, frame):
             pid, status = os.wait()
             if pid == self.tty.pid:
-                sys.exit(0)
+                self._alive = False
             self._input_target_is_main = True
             #self.subtty = None
 
