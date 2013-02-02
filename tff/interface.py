@@ -20,7 +20,8 @@
 
 import abc
 
-################################################################################
+
+###############################################################################
 #
 # interfaces
 #
@@ -85,6 +86,7 @@ class Scanner:
     def assign(self, value, termenc):
         yield
 
+
 class OutputStream:
     ''' abstruct TTY output stream '''
 
@@ -120,6 +122,7 @@ class EventDispatcher:
     def dispatch_char(self, c):
         pass
 
+
 class Parser:
     ''' abstruct Parser '''
 
@@ -128,6 +131,7 @@ class Parser:
     @abc.abstractmethod
     def parse(self, context):
         pass
+
 
 class PTY:
     ''' abstruct PTY device '''
@@ -159,5 +163,3 @@ class PTY:
     @abc.abstractmethod
     def drive(self):
         pass
-
-

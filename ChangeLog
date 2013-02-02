@@ -1,3 +1,12 @@
+
+2013-2-2 Hayaki Saito <user@zuse.jp>
+
+    * PEP-8 compatible style fix 
+
+2012-12-7 Hayaki Saito <user@zuse.jp>
+
+    * Fix parsing logic for string control sequenses
+
 2012-11-25 Hayaki Saito <user@zuse.jp>
 
     * Fix for -onlcr environment issue (reported by @uobikiemukot)
@@ -5,8 +14,4 @@
     * Add buffering option
     * Support surrogate pair
     * Ignore unicode decoding error (do fall over decoding)
-
-2012-12-7 Hayaki Saito <user@zuse.jp>
-
-    * Fix parsing logic for string control sequenses
 

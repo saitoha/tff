@@ -18,9 +18,10 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # ***** END LICENSE BLOCK *****
 
-################################################################################
+
+###############################################################################
 #
-# Exceptions 
+# Exceptions
 #
 class NotHandledException(Exception):
     ''' thrown when an unknown seqnence is detected '''
@@ -41,6 +42,7 @@ class NotHandledException(Exception):
         """
         return repr(self.value)
 
+
 class ParseException(Exception):
     ''' thrown when a parse error is detected '''
 
@@ -60,11 +62,11 @@ class ParseException(Exception):
         """
         return repr(self.value)
 
+
 def _test():
     import doctest
     doctest.testmod()
 
 ''' main '''
-if __name__ == '__main__':    
+if __name__ == '__main__':
     _test()
-

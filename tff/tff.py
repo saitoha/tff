@@ -18,15 +18,27 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # ***** END LICENSE BLOCK *****
 
-import sys, os, termios, pty, signal, fcntl, struct, select, errno
-import codecs, threading
-from interface import * # terminal filter framework interface
-from exception import *
+import sys
+import os
+import termios
+import pty
+import signal
+import fcntl
+import struct
+import select
+import errno
+import codecs
+import threading
+# terminal filter framework interface
+from interface import Scanner, Parser
+from interface import EventObserver, EventDispatcher, OutputStream, PTY
+#from exception import NotHandleException, ParseException
 
 _BUFFER_SIZE = 8192
-_ESC_TIMEOUT = 0.5 # sec
+_ESC_TIMEOUT = 0.5  # sec
 
-################################################################################
+
+###############################################################################
 #
 # Scanner implementation
 #
@@ -62,19 +74,20 @@ class DefaultScanner(Scanner):
         if self._ucs4:
             c1 = 0
             for x in self._data:
-                c = ord(x) 
+                c = ord(x)
                 if c >= 0xd800 and c <= 0xdbff:
                     c1 = c - 0xd800
                     continue
                 elif c1 != 0 and c >= 0xdc00 and c <= 0xdfff:
-                    c =  0x10000 + ((c1 << 10) | (c - 0xdc00))
+                    c = 0x10000 + ((c1 << 10) | (c - 0xdc00))
                     c1 = 0
                 yield c
         else:
             for x in self._data:
                 yield ord(x)
 
-################################################################################
+
+###############################################################################
 #
 # Simple Parser implementation
 #
@@ -87,7 +100,7 @@ class SimpleParser(Parser):
 
         def __iter__(self):
             for i in [1, 2, 3, 4, 5]:
-                yield i 
+                yield i
 
         def dispatch_char(self, c):
             self.output.append(c)
@@ -102,22 +115,24 @@ class SimpleParser(Parser):
         """
         for c in context:
             context.dispatch_char(c)
- 
-################################################################################
+
+
+###############################################################################
 #
 # Default Parser implementation
 #
-_STATE_GROUND           = 0
-_STATE_ESC              = 1
+_STATE_GROUND = 0
+_STATE_ESC = 1
 _STATE_ESC_INTERMEDIATE = 2
-_STATE_CSI_PARAMETER    = 3
+_STATE_CSI_PARAMETER = 3
 _STATE_CSI_INTERMEDIATE = 4
-_STATE_SS2              = 6
-_STATE_SS3              = 7
-_STATE_OSC              = 8
-_STATE_OSC_ESC          = 9
-_STATE_STR              = 10 
-_STATE_STR_ESC          = 11
+_STATE_SS2 = 6
+_STATE_SS3 = 7
+_STATE_OSC = 8
+_STATE_OSC_ESC = 9
+_STATE_STR = 10
+_STATE_STR_ESC = 11
+
 
 class _MockHandler:
 
@@ -133,13 +148,14 @@ class _MockHandler:
     def handle_char(self, context, c):
         print (c)
 
+
 class DefaultParser(Parser):
     ''' parse ESC/CSI/string seqneces '''
 
     def __init__(self):
         self.__state = _STATE_GROUND
-        self.__pbytes = [] 
-        self.__ibytes = [] 
+        self.__pbytes = []
+        self.__ibytes = []
 
     def init(self, context):
         self.__context = context
@@ -160,11 +176,11 @@ class DefaultParser(Parser):
         for c in context:
 
             if state == _STATE_GROUND:
-                if c == 0x1b: # ESC
+                if c == 0x1b:  # ESC
                     ibytes = []
                     state = _STATE_ESC
 
-                else: # control character
+                else:  # control character
                     context.dispatch_char(c)
 
             elif state == _STATE_ESC:
@@ -177,22 +193,22 @@ class DefaultParser(Parser):
                 #
                 #     ESC I ... I F
                 #
-                if c == 0x5b: # [
+                if c == 0x5b:  # [
                     pbytes = []
                     state = _STATE_CSI_PARAMETER
-                elif c == 0x5d: # ]
-                    pbytes = [c] 
+                elif c == 0x5d:  # ]
+                    pbytes = [c]
                     state = _STATE_OSC
-                elif c == 0x4e: # N
+                elif c == 0x4e:  # N
                     state = _STATE_SS2
-                elif c == 0x4f: # O
+                elif c == 0x4f:  # O
                     state = _STATE_SS3
                 elif c == 0x50 or c == 0x58 or c == 0x5e or c == 0x5f:
                     # P(DCS) or X(SOS) or ^(PM) or _(APC)
-                    pbytes = [c] 
+                    pbytes = [c]
                     state = _STATE_STR
-                elif c < 0x20: # control character
-                    if c == 0x1b: # ESC
+                elif c < 0x20:  # control character
+                    if c == 0x1b:  # ESC
                         seq = [0x1b]
                         context.dispatch_invalid(seq)
                         ibytes = []
@@ -204,13 +220,13 @@ class DefaultParser(Parser):
                         state = _STATE_GROUND
                     else:
                         context.dispatch_char(c)
-                elif c <= 0x2f: # SP to /
+                elif c <= 0x2f:  # SP to /
                     ibytes.append(c)
                     state = _STATE_ESC_INTERMEDIATE
-                elif c <= 0x7e: # ~
+                elif c <= 0x7e:  # ~
                     context.dispatch_esc(ibytes, c)
                     state = _STATE_GROUND
-                elif c == 0x7f: # control character
+                elif c == 0x7f:  # control character
                     context.dispatch_char(c)
                 else:
                     seq = [0x1b, c]
@@ -223,29 +239,29 @@ class DefaultParser(Parser):
                 # CSI P ... P I ... I F
                 #     ^
                 if c > 0x7e:
-                    if c == 0x7f: # control character
+                    if c == 0x7f:  # control character
                         context.dispatch_char(c)
                     else:
                         seq = [0x1b, 0x5b] + pbytes
                         context.dispatch_invalid(seq)
                         state = _STATE_GROUND
-                elif c > 0x3f: # Final byte, @ to ~
+                elif c > 0x3f:  # Final byte, @ to ~
                     context.dispatch_csi(pbytes, ibytes, c)
                     state = _STATE_GROUND
-                elif c > 0x2f: # parameter, 0 to ?
+                elif c > 0x2f:  # parameter, 0 to ?
                     pbytes.append(c)
-                elif c > 0x1f: # intermediate, SP to /
+                elif c > 0x1f:  # intermediate, SP to /
                     ibytes.append(c)
                     state = _STATE_CSI_INTERMEDIATE
 
                 # control chars
-                elif c == 0x1b: # ESC
+                elif c == 0x1b:  # ESC
                     seq = [0x1b, 0x5b] + pbytes
                     context.dispatch_invalid(seq)
                     ibytes = []
                     state = _STATE_ESC
 
-                elif c == 0x18 or c == 0x1a: # CAN, SUB
+                elif c == 0x18 or c == 0x1a:  # CAN, SUB
                     seq = [0x1b, 0x5b] + pbytes
                     context.dispatch_invalid(seq)
                     context.dispatch_char(c)
@@ -260,25 +276,25 @@ class DefaultParser(Parser):
                 # CSI P ... P I ... I F
                 #             ^
                 if c > 0x7e:
-                    if c == 0x7f: # control character
+                    if c == 0x7f:  # control character
                         context.dispatch_char(c)
                     else:
                         seq = [0x1b, 0x5b] + pbytes + ibytes
                         context.dispatch_invalid(seq)
                         state = _STATE_GROUND
-                elif c > 0x3f: # Final byte, @ to ~
+                elif c > 0x3f:  # Final byte, @ to ~
                     context.dispatch_csi(pbytes, ibytes, c)
                     state = _STATE_GROUND
                 elif c > 0x2f:
                     seq = [0x1b, 0x5b] + pbytes + ibytes
                     context.dispatch_invalid(seq)
                     state = _STATE_GROUND
-                elif c > 0x1f: # intermediate, SP to /
+                elif c > 0x1f:  # intermediate, SP to /
                     ibytes.append(c)
                     state = _STATE_CSI_INTERMEDIATE
 
                 # control chars
-                elif c == 0x1b: # ESC
+                elif c == 0x1b:  # ESC
                     seq = [0x1b, 0x5b] + pbytes + ibytes
                     context.dispatch_invalid(seq)
                     ibytes = []
@@ -293,19 +309,19 @@ class DefaultParser(Parser):
 
             elif state == _STATE_ESC_INTERMEDIATE:
                 if c > 0x7e:
-                    if c == 0x7f: # control character
+                    if c == 0x7f:  # control character
                         context.dispatch_char(c)
                     else:
                         seq = [0x1b] + ibytes
                         context.dispatch_invalid(seq)
                         state = _STATE_GROUND
-                elif c > 0x2f: # 0 to ~, Final byte
+                elif c > 0x2f:  # 0 to ~, Final byte
                     context.dispatch_esc(ibytes, c)
                     state = _STATE_GROUND
-                elif c > 0x1f: # SP to /
+                elif c > 0x1f:  # SP to /
                     ibytes.append(c)
                     state = _STATE_ESC_INTERMEDIATE
-                elif c == 0x1b: # ESC
+                elif c == 0x1b:  # ESC
                     seq = [0x1b] + ibytes
                     context.dispatch_invalid(seq)
                     ibytes = []
@@ -380,8 +396,8 @@ class DefaultParser(Parser):
                     state = _STATE_GROUND
 
             elif state == _STATE_SS3:
-                if c < 0x20: # control character
-                    if c == 0x1b: # ESC
+                if c < 0x20:  # control character
+                    if c == 0x1b:  # ESC
                         seq = [0x1b, 0x4f]
                         context.dispatch_invalid(seq)
                         ibytes = []
@@ -402,8 +418,8 @@ class DefaultParser(Parser):
                     context.dispatch_char(c)
 
             elif state == _STATE_SS2:
-                if c < 0x20: # control character
-                    if c == 0x1b: # ESC
+                if c < 0x20:  # control character
+                    if c == 0x1b:  # ESC
                         seq = [0x1b, 0x4e]
                         context.dispatch_invalid(seq)
                         ibytes = []
@@ -427,7 +443,8 @@ class DefaultParser(Parser):
         self.__ibytes = ibytes
         self.__state = state
 
-################################################################################
+
+###############################################################################
 #
 # Handler implementation
 #
@@ -455,9 +472,6 @@ class DefaultHandler(EventObserver):
     def handle_ss3(self, context, final):
         return False
 
-    def handle_char(self, context, c):
-        return False
-
     def handle_control_string(self, context, prefix, value):
         return False
 
@@ -474,7 +488,7 @@ class DefaultHandler(EventObserver):
         pass
 
 
-################################################################################
+###############################################################################
 #
 # Multiplexer implementation
 #
@@ -506,8 +520,10 @@ class FilterMultiplexer(EventObserver):
         return handled_lhs and handled_rhs
 
     def handle_csi(self, context, params, intermediate, final):
-        handled_lhs = self.__lhs.handle_csi(context, params, intermediate, final)
-        handled_rhs = self.__rhs.handle_csi(context, params, intermediate, final)
+        handled_lhs = self.__lhs.handle_csi(context, params,
+                                            intermediate, final)
+        handled_rhs = self.__rhs.handle_csi(context, params,
+                                            intermediate, final)
         return handled_lhs and handled_rhs
 
     def handle_esc(self, context, intermediate, final):
@@ -541,7 +557,7 @@ class FilterMultiplexer(EventObserver):
         return handled_lhs and handled_rhs
 
 
-################################################################################
+###############################################################################
 #
 # Dispatcher implementation
 #
@@ -551,22 +567,24 @@ class ParseContext(OutputStream, EventDispatcher):
 
     def __init__(self,
                  output,
-                 termenc = 'UTF-8',
-                 scanner = DefaultScanner(),
-                 handler = DefaultHandler(),
-                 buffering = False):
+                 termenc='UTF-8',
+                 scanner=DefaultScanner(),
+                 handler=DefaultHandler(),
+                 buffering=False):
         self.__termenc = termenc
-        self.__scanner = scanner 
+        self.__scanner = scanner
         self.__handler = handler
         if buffering:
             try:
                 from cStringIO import StringIO
-            except:
+                self._output = codecs.getwriter(termenc)(StringIO())
+            except ImportError:
                 try:
                     from StringIO import StringIO
-                except:
+                    self._output = codecs.getwriter(termenc)(StringIO())
+                except ImportError:
                     from io import StringIO
-            self._output = codecs.getwriter(termenc)(StringIO())
+                    self._output = codecs.getwriter(termenc)(StringIO())
         else:
             self._output = codecs.getwriter(termenc)(output)
         self._target_output = output
@@ -600,7 +618,7 @@ class ParseContext(OutputStream, EventDispatcher):
             self._output.write(unichr(self.__c1) + unichr(c))
         elif c < 0x10000:
             self._output.write(unichr(c))
-        else: # c > 0x10000
+        else:  # c > 0x10000
             c -= 0x10000
             c1 = (c >> 10) + 0xd800
             c2 = (c & 0x3ff) + 0xdc00
@@ -623,21 +641,21 @@ class ParseContext(OutputStream, EventDispatcher):
             self._target_output.write(self._output)
         try:
             self._target_output.flush()
-        except IOError, e:
+        except IOError:
             pass
 
 # EventDispatcher
     def dispatch_esc(self, intermediate, final):
         if not self.__handler.handle_esc(self, intermediate, final):
-            self.put(0x1b) # ESC
+            self.put(0x1b)  # ESC
             for c in intermediate:
                 self.put(c)
             self.put(final)
 
     def dispatch_csi(self, parameter, intermediate, final):
         if not self.__handler.handle_csi(self, parameter, intermediate, final):
-            self.put(0x1b) # ESC
-            self.put(0x5b) # [
+            self.put(0x1b)  # ESC
+            self.put(0x5b)  # [
             for c in parameter:
                 self.put(c)
             for c in intermediate:
@@ -646,24 +664,24 @@ class ParseContext(OutputStream, EventDispatcher):
 
     def dispatch_ss2(self, final):
         if not self.__handler.handle_ss2(self, final):
-            self.put(0x1b) # ESC
-            self.put(0x4e) # N
+            self.put(0x1b)  # ESC
+            self.put(0x4e)  # N
             self.put(final)
 
     def dispatch_ss3(self, final):
         if not self.__handler.handle_ss3(self, final):
-            self.put(0x1b) # ESC
-            self.put(0x4f) # O
+            self.put(0x1b)  # ESC
+            self.put(0x4f)  # O
             self.put(final)
 
     def dispatch_control_string(self, prefix, value):
         if not self.__handler.handle_control_string(self, prefix, value):
-            self.put(0x1b) # ESC
+            self.put(0x1b)  # ESC
             self.put(prefix)
             for c in value:
                 self.put(c)
-            self.put(0x1b) # ESC
-            self.put(0x5c) # \
+            self.put(0x1b)  # ESC
+            self.put(0x5c)  # \
 
     def dispatch_char(self, c):
         if not self.__handler.handle_char(self, c):
@@ -674,7 +692,8 @@ class ParseContext(OutputStream, EventDispatcher):
             for c in seq:
                 self.put(c)
 
-################################################################################
+
+###############################################################################
 #
 # DefaultPTY
 #
@@ -687,11 +706,11 @@ class DefaultPTY(PTY):
     def __init__(self, term, lang, command, stdin):
         self._stdin_fileno = stdin.fileno()
         backup = termios.tcgetattr(self._stdin_fileno)
-        self._backup_termios = backup 
+        self._backup_termios = backup
         pid, master = pty.fork()
         if not pid:
-            os.environ['TERM'] = term 
-            os.environ['LANG'] = lang 
+            os.environ['TERM'] = term
+            os.environ['LANG'] = lang
             os.execlp('/bin/sh',
                       '/bin/sh', '-c',
                       'exec %s' % command)
@@ -699,7 +718,7 @@ class DefaultPTY(PTY):
         self.__setupterm(self._stdin_fileno)
         self.pid = pid
         self._master = master
-     
+
     def close(self):
         self.restore_term()
         os.close(self._master)
@@ -715,16 +734,16 @@ class DefaultPTY(PTY):
         ## c_iflag
         #IUTF8 = 16384
         term[0] &= ~(termios.IGNBRK
-                   | termios.BRKINT
-                   | termios.PARMRK 
-                   | termios.ISTRIP
-                   | termios.INLCR
-                   | termios.IGNCR 
-                   | termios.ICRNL
-                   | termios.IXON)
+                     | termios.BRKINT
+                     | termios.PARMRK
+                     | termios.ISTRIP
+                     | termios.INLCR
+                     | termios.IGNCR
+                     | termios.ICRNL
+                     | termios.IXON)
 
-        term[1] &= ~(termios.OPOST 
-                   | termios.ONLCR)
+        term[1] &= ~(termios.OPOST
+                     | termios.ONLCR)
 
         # c_cflag
         c_cflag = term[2]
@@ -735,10 +754,10 @@ class DefaultPTY(PTY):
         ## c_lflag
         c_lflag = term[3]
         c_lflag &= ~(termios.ECHO
-                   | termios.ECHONL
-                   | termios.ICANON
-                   | termios.ISIG
-                   | termios.IEXTEN)
+                     | termios.ECHONL
+                     | termios.ICANON
+                     | termios.ISIG
+                     | termios.IEXTEN)
         term[3] = c_lflag
 
         # c_cc
@@ -746,17 +765,17 @@ class DefaultPTY(PTY):
         vdisable = os.fpathconf(self._stdin_fileno, 'PC_VDISABLE')
         VDSUSP = 11
         c_cc = term[6]
-        c_cc[termios.VEOF]     = vdisable  # Ctrl-D
-        c_cc[termios.VINTR]    = vdisable  # Ctrl-C
+        c_cc[termios.VEOF] = vdisable  # Ctrl-D
+        c_cc[termios.VINTR] = vdisable  # Ctrl-C
         c_cc[termios.VREPRINT] = vdisable  # Ctrl-R
-        c_cc[termios.VSTART]   = vdisable  # Ctrl-Q
-        c_cc[termios.VSTOP]    = vdisable  # Ctrl-S
-        c_cc[termios.VLNEXT]   = vdisable  # Ctrl-V
-        c_cc[termios.VWERASE]  = vdisable  # Ctrl-W
-        c_cc[termios.VKILL]    = vdisable  # Ctrl-X
-        c_cc[termios.VSUSP]    = vdisable  # Ctrl-Z
-        c_cc[termios.VQUIT]    = vdisable  # Ctrl-\
-        c_cc[VDSUSP]           = vdisable  # Ctrl-Y
+        c_cc[termios.VSTART] = vdisable  # Ctrl-Q
+        c_cc[termios.VSTOP] = vdisable  # Ctrl-S
+        c_cc[termios.VLNEXT] = vdisable  # Ctrl-V
+        c_cc[termios.VWERASE] = vdisable  # Ctrl-W
+        c_cc[termios.VKILL] = vdisable  # Ctrl-X
+        c_cc[termios.VSUSP] = vdisable  # Ctrl-Z
+        c_cc[termios.VQUIT] = vdisable  # Ctrl-\
+        c_cc[VDSUSP] = vdisable  # Ctrl-Y
 
         termios.tcsetattr(fd, termios.TCSANOW, term)
 
@@ -766,15 +785,15 @@ class DefaultPTY(PTY):
         os.kill(self.pid, signal.SIGWINCH)
 
     def fitsize(self):
-         winsize = fcntl.ioctl(self._stdin_fileno, termios.TIOCGWINSZ, 'hhhh')
-         height, width = struct.unpack('hh', winsize)
-         self.__resize_impl(winsize)
-         return height, width
+        winsize = fcntl.ioctl(self._stdin_fileno, termios.TIOCGWINSZ, 'hhhh')
+        height, width = struct.unpack('hh', winsize)
+        self.__resize_impl(winsize)
+        return height, width
 
     def resize(self, height, width):
-         winsize = struct.pack('HHHH', height, width, 0, 0)
-         self.__resize_impl(winsize)
-         return height, width
+        winsize = struct.pack('HHHH', height, width, 0, 0)
+        self.__resize_impl(winsize)
+        return height, width
 
     def fileno(self):
         return self._master
@@ -801,8 +820,7 @@ class DefaultPTY(PTY):
         termios.tcflow(self._master, termios.TCOON)
 
 
- 
-################################################################################
+###############################################################################
 #
 # Session
 #
@@ -824,7 +842,7 @@ class Session:
         if self.subtty:
             self._input_target_is_main = not self._input_target_is_main
         else:
-            self._input_target_is_main = True 
+            self._input_target_is_main = True
 
     def add_subtty(self,
                    term,
@@ -866,7 +884,7 @@ class Session:
         self._subprocess_outputcontext = outputcontext
         self._subprocess_inputparser = DefaultParser()
         self._subprocess_outputparser = DefaultParser()
-        self._subprocess_listener =listener
+        self._subprocess_listener = listener
         self._subprocess_inputparser.init(inputcontext)
         self._subprocess_outputparser.init(outputcontext)
         listener.handle_start(outputcontext)
@@ -923,7 +941,8 @@ class Session:
 
     def destruct_subprocess(self):
         if self.subtty:
-            self._subprocess_listener.handle_end(self._subprocess_outputcontext)
+            context = self._subprocess_outputcontext
+            self._subprocess_listener.handle_end(context)
             self._input_target_is_main = True
             sub_master = self.subtty.fileno()
             self._rfds.remove(sub_master)
@@ -933,18 +952,18 @@ class Session:
             self.subtty = None
 
     def drive(self):
-       
+
         def onresize(no, frame):
             self._resized = True
         try:
             signal.signal(signal.SIGWINCH, onresize)
         except ValueError:
             pass
- 
+
         main_master = self.tty.fileno()
         stdin_fileno = self.tty.stdin_fileno()
         try:
-            while True: 
+            while True:
 
                 try:
                     rfd, wfd, xfd = select.select(self._rfds,
@@ -984,7 +1003,8 @@ class Session:
                 except select.error, e:
                     no, msg = e
                     self._input_target_is_main = True
-                    if no == errno.EINTR: # The call was interrupted by a signal
+                    if no == errno.EINTR:
+                        # The call was interrupted by a signal
                         self._resized = True
                     elif no == errno.EBADF:
                         self.destruct_subprocess()
@@ -1017,7 +1037,7 @@ class Session:
               outputparser=DefaultParser(),
               outputhandler=DefaultHandler(),
               buffering=False):
- 
+
         tty = self.tty
 
         inputcontext = ParseContext(output=tty,
@@ -1051,14 +1071,14 @@ class Session:
         self._inputparser = inputparser
         self._outputparser = outputparser
 
-        self._esc_timer = None    
+        self._esc_timer = None
         self.drive()
+
 
 def _test():
     import doctest
     doctest.testmod()
 
 ''' main '''
-if __name__ == '__main__':    
+if __name__ == '__main__':
     _test()
-
