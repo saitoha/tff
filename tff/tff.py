@@ -286,7 +286,7 @@ class DefaultParser(Parser):
                     context.dispatch_csi(pbytes, ibytes, c)
                     state = _STATE_GROUND
                 elif c > 0x2f:
-                    seq = [0x1b, 0x5b] + pbytes + ibytes
+                    seq = [0x1b, 0x5b] + pbytes + ibytes + [c]
                     context.dispatch_invalid(seq)
                     state = _STATE_GROUND
                 elif c > 0x1f:  # intermediate, SP to /
@@ -312,7 +312,7 @@ class DefaultParser(Parser):
                     if c == 0x7f:  # control character
                         context.dispatch_char(c)
                     else:
-                        seq = [0x1b] + ibytes
+                        seq = [0x1b] + ibytes + [c]
                         context.dispatch_invalid(seq)
                         state = _STATE_GROUND
                 elif c > 0x2f:  # 0 to ~, Final byte
