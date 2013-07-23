@@ -819,6 +819,48 @@ class DefaultPTY(PTY):
         #fcntl.ioctl(self._master, termios.TIOCSTART, 0)
         termios.tcflow(self._master, termios.TCOON)
 
+###############################################################################
+#
+# Terminal
+#
+class Terminal:
+
+    tty = None
+
+    def __init__(self, tty):
+        self.tty = tty
+
+    def start(self, termenc, inputhandler, outputhandler, inputparser, outputparser, listener):
+
+        inputcontext = ParseContext(output=self.tty,
+                                    termenc=termenc,
+                                    scanner=DefaultScanner(),
+                                    handler=inputhandler,
+                                    buffering=False)
+        outputcontext = ParseContext(output=sys.stdout,
+                                     termenc=termenc,
+                                     scanner=DefaultScanner(),
+                                     handler=outputhandler,
+                                     buffering=False)
+
+        self._inputparser = inputparser
+        self._outputparser = outputparser
+        self._listener = listener
+        self._inputparser.init(inputcontext)
+        self._outputparser.init(outputcontext)
+        listener.handle_start(outputcontext)
+        self._outputcontext = outputcontext
+
+    def end(self):
+        self._listener.handle_end(self._outputcontext)
+
+    def on_write(self, data):
+        self._inputparser.parse(data)
+
+    def on_read(self, fd):
+        if fd == self.tty.fileno():
+            data = self.tty.read()
+            self._outputparser.parse(data)
 
 ###############################################################################
 #
@@ -828,8 +870,10 @@ class Session:
 
     _input_target_is_main = True
     _alive = True
+    _subprocess = None
 
     def __init__(self, tty):
+        self.terminal = Terminal(tty)
         self.tty = tty
         self.subtty = None
         main_master = self.tty.fileno()
@@ -840,55 +884,34 @@ class Session:
         self._resized = False
 
     def switch_input_target(self):
-        if self.subtty:
+        if self._subprocess:
             self._input_target_is_main = not self._input_target_is_main
         else:
             self._input_target_is_main = True
 
-    def add_subtty(self,
-                   term,
-                   lang,
-                   command,
-                   row,
-                   col,
-                   termenc,
-                   inputhandler,
-                   outputhandler,
-                   listener):
+    def add_subtty(self, term, lang, command, row, col,
+                   termenc, inputhandler, outputhandler, listener):
 
-        if self.subtty:
-            self.subtty.close()
-            self.subtty = None
+        if self._subprocess:
+            self._subprocess.tty.close()
+            self._subprocess = None
 
         self.tty.restore_term()
         subtty = DefaultPTY(term, lang, command, sys.stdin)
         subtty.resize(row, col)
+        self._subprocess = Terminal(subtty)
         self.subtty = subtty
 
         sub_master = subtty.fileno()
         self._rfds.append(sub_master)
         self._xfds.append(sub_master)
 
-        inputcontext = ParseContext(output=subtty,
-                                    termenc=termenc,
-                                    scanner=DefaultScanner(),
-                                    handler=inputhandler,
-                                    buffering=False)
-        outputcontext = ParseContext(output=sys.stdout,
-                                     termenc=termenc,
-                                     scanner=DefaultScanner(),
-                                     handler=outputhandler,
-                                     buffering=False)
-        self._subprocess_inputhandler = inputhandler
-        self._subprocess_outputhandler = outputhandler
-        self._subprocess_inputcontext = inputcontext
-        self._subprocess_outputcontext = outputcontext
-        self._subprocess_inputparser = DefaultParser()
-        self._subprocess_outputparser = DefaultParser()
-        self._subprocess_listener = listener
-        self._subprocess_inputparser.init(inputcontext)
-        self._subprocess_outputparser.init(outputcontext)
-        listener.handle_start(outputcontext)
+        self._subprocess.start(termenc,
+                               inputhandler,
+                               outputhandler,
+                               DefaultParser(),
+                               DefaultParser(),
+                               listener)
 
     def process_input(self, data):
         if not self._esc_timer is None:
@@ -941,16 +964,14 @@ class Session:
             self._resized = False
 
     def destruct_subprocess(self):
-        if self.subtty:
-            context = self._subprocess_outputcontext
-            self._subprocess_listener.handle_end(context)
+        if self._subprocess:
             self._input_target_is_main = True
-            sub_master = self.subtty.fileno()
+            sub_master = self._subprocess.tty.fileno()
             self._rfds.remove(sub_master)
             self._xfds.remove(sub_master)
-            self._subtty = self.subtty
+            self._subprocess.end()
+            self._subprocess = None
             self.process_output("")
-            self.subtty = None
 
     def drive(self):
 
@@ -976,7 +997,7 @@ class Session:
                                 return
                             elif fd == stdin_fileno:
                                 return
-                            elif fd == self.subtty.fileno():
+                            elif fd == self._subprocess.tty.fileno():
                                 self.destruct_subprocess()
                             else:
                                 return
@@ -992,14 +1013,13 @@ class Session:
                             data = os.read(stdin_fileno, _BUFFER_SIZE)
                             if self._input_target_is_main:
                                 self.process_input(data)
-                            elif self.subtty:
-                                self._subprocess_inputparser.parse(data)
+                            elif self._subprocess:
+                                self._subprocess.on_write(data)
                                 self.process_input("")
                             else:
                                 self._input_target_is_main = True
-                        elif self.subtty and fd == self.subtty.fileno():
-                            data = self.subtty.read()
-                            self._subprocess_outputparser.parse(data)
+                        elif self._subprocess:
+                            self._subprocess.on_read(fd)
                             self.process_output("")
                 except select.error, e:
                     no, msg = e
