@@ -851,6 +851,12 @@ class Terminal:
         listener.handle_start(outputcontext)
         self._outputcontext = outputcontext
 
+    def fileno(self):
+        return self.tty.fileno()
+
+    def close(self):
+        self.tty.close()
+
     def end(self):
         self._listener.handle_end(self._outputcontext)
 
@@ -893,7 +899,7 @@ class Session:
                    termenc, inputhandler, outputhandler, listener):
 
         if self._subprocess:
-            self._subprocess.tty.close()
+            self._subprocess.close()
             self._subprocess = None
 
         self.tty.restore_term()
@@ -966,7 +972,7 @@ class Session:
     def destruct_subprocess(self):
         if self._subprocess:
             self._input_target_is_main = True
-            sub_master = self._subprocess.tty.fileno()
+            sub_master = self._subprocess.fileno()
             self._rfds.remove(sub_master)
             self._xfds.remove(sub_master)
             self._subprocess.end()
@@ -997,7 +1003,7 @@ class Session:
                                 return
                             elif fd == stdin_fileno:
                                 return
-                            elif fd == self._subprocess.tty.fileno():
+                            elif fd == self._subprocess.fileno():
                                 self.destruct_subprocess()
                             else:
                                 return
