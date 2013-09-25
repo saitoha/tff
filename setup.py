@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages, Extension
 from tff import __version__, __license__, __author__, __doc__
 
 import inspect, os
@@ -13,6 +13,7 @@ setup(name                  = 'tff',
       description           = 'Terminal Filter Framework',
       long_description      = open(dirpath + "/README.rst").read(),
       py_modules            = ['tff'],
+      ext_modules           = [Extension('ctff', sources = ['ctff.c'])],
       eager_resources       = [],
       classifiers           = ['Development Status :: 4 - Beta',
                                'Topic :: Terminals',
