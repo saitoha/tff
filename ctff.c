@@ -69,25 +69,22 @@ DefaultScanner_next(DefaultScanner *self, PyObject *unused)
     PyObject *row;
     unsigned char c0, c1, c2, c3, c4;
 
+    if (self->pos == self->length) {
+        PyErr_SetString(PyExc_StopIteration, "");
+        return NULL;
+    }
+
     c0 = (unsigned char)self->p_data[self->pos++];
 
     if (c0 < 0x7f) {
-        PyInt_FromLong(c0);
+        return PyInt_FromLong(c0);
     } else if (c0 < 0xc2) {
     } else if (c0 < 0xdf) {
         c1 = (unsigned char)self->p_data[self->pos++];
         if (c1) {
         }
     } 
-
-    check_result_connection(self);
-    row = _mysql_ResultObject_simple_fetch_row(self, NULL);
-    if (row == Py_None) {
-        Py_DECREF(row);
-        PyErr_SetString(PyExc_StopIteration, "");
-        return NULL;
-    }
-    return row;
+    return Py_None;
 }
 
 static PyObject *
