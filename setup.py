@@ -28,7 +28,7 @@ setup(name                  = 'tff',
       url                   = 'https://github.com/saitoha/tff',
       license               = __license__,
       packages              = find_packages(exclude=['test']),
-      zip_safe              = True,
+      zip_safe              = False,
       include_package_data  = False,
       install_requires      = [],
       )
