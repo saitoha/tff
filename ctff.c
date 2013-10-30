@@ -40,10 +40,7 @@ DefaultScanner_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 static void
 DefaultScanner_dealloc(DefaultScanner *self)
 {
-    if (self->p_data) {
-        free(self->p_data);
-        self->p_data = NULL;
-    }
+    /* self->p_data is narrowed reference */
 
     self->ob_type->tp_free((PyObject*)self);
 }
@@ -52,6 +49,7 @@ DefaultScanner_dealloc(DefaultScanner *self)
 static int
 DefaultScanner_init(DefaultScanner *self, PyObject *args, PyObject *kwds)
 {
+    /* Py_INCREF(self); */
     return 0;
 }
 
@@ -67,7 +65,9 @@ static PyObject *
 DefaultScanner_next(DefaultScanner *self, PyObject *unused)
 {
     PyObject *row;
-    unsigned char c0, c1, c2, c3, c4;
+    unsigned char c0, c1;//, c2, c3, c4;
+
+    Py_INCREF(self);
 
     if (self->pos == self->length) {
         PyErr_SetString(PyExc_StopIteration, "");
@@ -84,6 +84,9 @@ DefaultScanner_next(DefaultScanner *self, PyObject *unused)
         if (c1) {
         }
     } 
+
+    Py_DECREF(self);
+
     return Py_None;
 }
 
@@ -95,11 +98,20 @@ DefaultScanner_assign(PyObject *self, PyObject *args)
 
     p_scanner = (DefaultScanner *)self;
 
+    Py_INCREF(p_scanner);
+
+    assert(p_scanner != NULL);
+
     if (!PyArg_ParseTuple(args, "s#", &p_scanner->p_data, &p_scanner->length)) {
+
+        Py_DECREF(p_scanner);
+
         return NULL;
     }
 
-    return 0;
+    Py_DECREF(p_scanner);
+
+    return Py_None;
 }
 
 static PyMethodDef DefaultScanner_methods[] = {
