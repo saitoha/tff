@@ -2,7 +2,7 @@
 PACKAGE_NAME=tff
 PYTHON=python
 
-all: test
+all: smoketest
 	$(PYTHON) setup.py sdist
 	python2.6 setup.py bdist_egg
 	python2.7 setup.py bdist_egg
@@ -17,8 +17,9 @@ uninstall:
 clean:
 	rm -rf dist/ build/ *.egg-info *.pyc **/*.pyc
 
-test:
+smoketest:
 	$(PYTHON) setup.py test
+	./test.py
 
 update: clean test
 	$(PYTHON) setup.py register

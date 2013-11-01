@@ -38,6 +38,7 @@ typedef struct _DefaultScanner {
     char *p_data;
     int length;
     int pos;
+    int ucs4;
 } DefaultScanner;
 
 /** allocator */
@@ -51,6 +52,7 @@ DefaultScanner_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     self->p_data = NULL;
     self->length = 0;
     self->pos = 0;
+    self->ucs4 = 0;
 
     return (PyObject *)self;
 }
@@ -134,7 +136,14 @@ DefaultScanner_assign(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef DefaultScanner_methods[] = {
-    {"chunk", DefaultScanner_assign, METH_VARARGS, "assign a data chunk" },
+    {"assign", DefaultScanner_assign, METH_VARARGS, "assign a data chunk" },
+    { NULL }  /* Sentinel */
+};
+
+/*
+ */
+static PyMemberDef DefaultScanner_members[] = {
+    { "_ucs4", T_BOOL, offsetof(DefaultScanner, ucs4), 0, "" },
     { NULL }  /* Sentinel */
 };
 
@@ -166,9 +175,9 @@ static PyTypeObject DefaultScannerType = {
     0,                                        /* tp_richcompare    */
     0,                                        /* tp_weaklistoffset */
     0,                                        /* tp_iter           */
-    0,                                        /* tp_iternext       */
+    DefaultScanner_next,                      /* tp_iternext       */
     DefaultScanner_methods,                   /* tp_methods        */
-    0,                                        /* tp_members        */
+    DefaultScanner_members,                   /* tp_members        */
     0,                                        /* tp_getset         */
     0,                                        /* tp_base           */
     0,                                        /* tp_dict           */
