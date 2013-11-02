@@ -42,9 +42,9 @@ except:
     from scanner import DefaultScanner
 
 try:
-    from parser import DefaultParser
+    from ctff import DefaultParser
 except:
-    from scanner import DefaultParser
+    from parser import DefaultParser
  
 ###############################################################################
 #
