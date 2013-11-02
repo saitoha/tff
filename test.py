@@ -1,6 +1,10 @@
 #!/usr/bin/python
 
-from ctff import DefaultScanner
+try:
+    from ctff import DefaultScanner
+except:
+    from tff.scanner import DefaultScanner
+
 
 def _test1():
     """
@@ -10,13 +14,9 @@ def _test1():
     >>> scanner = DefaultScanner()
     >>> scanner.assign("01234", "ascii")
     >>> scanner.assign("012344", "ascii")
-    >>> scanner._length
-    6
-    >>> scanner.next()
-    48
-    >>> scanner.next()
-    49
     >>> for i in scanner: print i
+    48
+    49
     50
     51
     52
