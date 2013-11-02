@@ -7,6 +7,28 @@ def _test1():
     >>> scanner = DefaultScanner()
     >>> scanner._ucs4
     False
+    >>> scanner = DefaultScanner()
+    >>> scanner.assign("01234", "ascii")
+    >>> scanner.assign("012344", "ascii")
+    >>> scanner._length
+    6
+    >>> scanner.next()
+    48
+    >>> scanner.next()
+    49
+    >>> for i in scanner: print i
+    50
+    51
+    52
+    52
+    >>> scanner = DefaultScanner()
+    >>> scanner.assign("abcde", "UTF-8")
+    >>> print [ c for c in scanner ]
+    [97, 98, 99, 100, 101]
+    >>> scanner = DefaultScanner()
+    >>> scanner.assign("\xcc\xb3\xe2\x80\x80\xe4\x80\xb4\xe4\x80\x82", "UTF-8")
+    >>> print [ c for c in scanner ]
+    [819, 8192, 16436, 16386]
     """
 
 def _test():

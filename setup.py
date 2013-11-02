@@ -6,7 +6,7 @@ from tff import __version__, __license__, __author__, __doc__
 import inspect, os
 
 filename = inspect.getfile(inspect.currentframe())
-dirpath = os.path.abspath(os.path.dirname(inspect.getfile(inspect.currentframe())))
+dirpath = os.path.abspath(os.path.dirname(filename))
 
 setup(name                  = 'tff',
       version               = __version__,
@@ -19,7 +19,8 @@ setup(name                  = 'tff',
                                'Topic :: Terminals',
                                'Environment :: Console',
                                'Intended Audience :: Developers',
-                               'License :: OSI Approved :: GNU General Public License (GPL)',
+                               'License :: OSI Approved :: '
+                                   'GNU General Public License (GPL)',
                                'Programming Language :: Python'
                                ],
       keywords              = 'terminal filter',

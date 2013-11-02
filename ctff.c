@@ -39,6 +39,7 @@ typedef struct _DefaultScanner {
     int length;
     int pos;
     int ucs4;
+    PyObject *init_args;
 } DefaultScanner;
 
 /** allocator */
@@ -53,6 +54,7 @@ DefaultScanner_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     self->length = 0;
     self->pos = 0;
     self->ucs4 = 0;
+    self->init_args = NULL;
 
     return (PyObject *)self;
 }
@@ -61,8 +63,7 @@ DefaultScanner_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 static void
 DefaultScanner_dealloc(DefaultScanner *self)
 {
-    /* self->p_data is narrowed reference */
-
+    Py_XDECREF(self->init_args);
     self->ob_type->tp_free((PyObject*)self);
 }
 
@@ -76,74 +77,110 @@ DefaultScanner_init(DefaultScanner *self, PyObject *args, PyObject *kwds)
 
 
 static PyObject *
-DefaultScanner_self(DefaultScanner *self, PyObject *unused)
+DefaultScanner_iter(PyObject *self, PyObject *unused)
 {
     Py_INCREF(self);
-    return (PyObject *)self;
+    return self;
 }
+
 
 static PyObject *
 DefaultScanner_next(DefaultScanner *self, PyObject *unused)
 {
-    PyObject *row;
-    unsigned char c0, c1;//, c2, c3, c4;
+    long code_point;
+    unsigned char c;
+    char *p;
+    int i, n, length;
 
-    Py_INCREF(self);
-
-    if (self->pos == self->length) {
+    if (self->pos >= self->length) {
         PyErr_SetString(PyExc_StopIteration, "");
         return NULL;
     }
 
-    c0 = (unsigned char)self->p_data[self->pos++];
+    length = 1;
+    p = self->p_data + self->pos;
 
-    if (c0 < 0x7f) {
-        return PyInt_FromLong(c0);
-    } else if (c0 < 0xc2) {
-    } else if (c0 < 0xdf) {
-        c1 = (unsigned char)self->p_data[self->pos++];
-        if (c1) {
-        }
-    } 
+    c = *p;
+    if(~c & 0x80) {
+        /* 0xxxxxxx */
+        code_point = c;
+	goto valid;
+    } else if((c & 0xe0) == 0xc0) {
+        /* 110xxxxx */
+        code_point = c & 0x1F;
+        n = 1;
+    } else if((c & 0xf0) == 0xe0) {
+        /* 1110xxxx */
+        code_point = c & 0x0F;
+        n = 2;
+    } else if((c & 0xf8) == 0xf0) {
+        /* 11110xxx */
+        code_point = c & 0x07;
+        n = 3;
+    } else {
+        goto invalid;
+    }
 
-    Py_DECREF(self);
+    for(i = n, ++p; i > 0; --i, ++length, ++p) {
+        c = *p;
+        if((c & 0xc0) != 0x80) /* 10xxxxxx */
+            goto invalid;
+        code_point <<= 6;
+        code_point |= c & 0x3F;
+    }
 
-    return Py_None;
+    if((n == 1 && code_point < 0x80) ||
+       (n == 2 && code_point < 0x800) ||
+       (n == 3 && code_point < 0x10000) ||
+       (code_point >= 0xd800 && code_point <= 0xdfff)) {
+        goto invalid;
+    }
+
+valid:
+    self->pos += length;
+    return PyInt_FromLong(code_point);
+
+invalid:
+    self->pos += length;
+    return PyInt_FromLong(0xfffd);
 }
 
 static PyObject *
-DefaultScanner_assign(PyObject *self, PyObject *args)
+DefaultScanner_assign(DefaultScanner *self, PyObject *args)
 {
-    PyTypeObject *type;
-    DefaultScanner *p_scanner;
+    char *termenc = NULL;
+    char *p_data = NULL;
+    int length = 0;
+    int result = 0;
 
-    p_scanner = (DefaultScanner *)self;
-
-    Py_INCREF(p_scanner);
-
-    assert(p_scanner != NULL);
-
-    if (!PyArg_ParseTuple(args, "s#", &p_scanner->p_data, &p_scanner->length)) {
-
-        Py_DECREF(p_scanner);
-
+    result = PyArg_ParseTuple(args, "s#s", &p_data, &length, &termenc);
+    if (!result) {
         return NULL;
     }
 
-    Py_DECREF(p_scanner);
+    Py_INCREF(args);
+    self->pos = 0;
+    self->length = length;
+    self->p_data = p_data;
+
+    Py_XDECREF(self->init_args);
+    self->init_args = args;
 
     return Py_None;
 }
 
 static PyMethodDef DefaultScanner_methods[] = {
-    {"assign", DefaultScanner_assign, METH_VARARGS, "assign a data chunk" },
+    {"assign", (PyCFunction)DefaultScanner_assign, METH_VARARGS,
+     "assign a data chunk" },
     { NULL }  /* Sentinel */
 };
 
 /*
  */
 static PyMemberDef DefaultScanner_members[] = {
-    { "_ucs4", T_BOOL, offsetof(DefaultScanner, ucs4), 0, "" },
+    { "_data", T_STRING, offsetof(DefaultScanner, p_data), READONLY, "" },
+    { "_length", T_INT, offsetof(DefaultScanner, length), READONLY, "" },
+    { "_ucs4", T_BOOL, offsetof(DefaultScanner, ucs4), READONLY, "" },
     { NULL }  /* Sentinel */
 };
 
@@ -174,8 +211,8 @@ static PyTypeObject DefaultScannerType = {
     0,                                        /* tp_clear          */
     0,                                        /* tp_richcompare    */
     0,                                        /* tp_weaklistoffset */
-    0,                                        /* tp_iter           */
-    DefaultScanner_next,                      /* tp_iternext       */
+    (getiterfunc)DefaultScanner_iter,         /* tp_iter           */
+    (iternextfunc)DefaultScanner_next,        /* tp_iternext       */
     DefaultScanner_methods,                   /* tp_methods        */
     DefaultScanner_members,                   /* tp_members        */
     0,                                        /* tp_getset         */

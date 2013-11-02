@@ -37,13 +37,17 @@ from interface import EventObserver, EventDispatcher, OutputStream, PTY
 _BUFFER_SIZE = 8192
 _ESC_TIMEOUT = 0.5  # sec
 
+try:
+    from ctff import cDefaultScanner
+except:
+    pass
 
 ###############################################################################
 #
 # Scanner implementation
 #
 class DefaultScanner(Scanner):
-    ''' scan input stream and iterate UCS-2 code points '''
+    ''' scan input stream and iterate UCS code points '''
     _data = None
     _ucs4 = False
 

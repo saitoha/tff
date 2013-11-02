@@ -3,6 +3,9 @@ PACKAGE_NAME=tff
 PYTHON=python
 
 all: smoketest
+	$(PYTHON) setup.py bdist
+
+build: smoketest
 	$(PYTHON) setup.py sdist
 	python2.6 setup.py bdist_egg
 	python2.7 setup.py bdist_egg
