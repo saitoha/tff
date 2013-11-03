@@ -42,10 +42,12 @@ except:
     from scanner import DefaultScanner
 
 try:
-    from ctff import DefaultParser
+    from ctff import DefaultParser as OutputParser
 except:
-    from parser import DefaultParser
+    from parser import DefaultParser as OutputParser
  
+from parser import DefaultParser
+
 ###############################################################################
 #
 # Handler implementation
@@ -663,7 +665,7 @@ class Session:
               inputparser=DefaultParser(),
               inputhandler=DefaultHandler(),
               outputscanner=DefaultScanner(),
-              outputparser=DefaultParser(),
+              outputparser=OutputParser(),
               outputhandler=DefaultHandler(),
               buffering=False):
 

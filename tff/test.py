@@ -5,6 +5,8 @@ try:
 except:
     from tff.scanner import DefaultScanner
 
+from ctff import DefaultParser
+
 
 def _test1():
     """
@@ -29,6 +31,7 @@ def _test1():
     >>> scanner.assign("\xcc\xb3\xe2\x80\x80\xe4\x80\xb4\xe4\x80\x82", "UTF-8")
     >>> print [ c for c in scanner ]
     [819, 8192, 16436, 16386]
+    >>> parser = DefaultParser()
     """
 
 def _test():

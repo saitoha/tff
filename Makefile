@@ -5,6 +5,10 @@ PYTHON=python
 all: smoketest
 	$(PYTHON) setup.py bdist
 
+cbuild:
+	cc -fno-strict-aliasing -fno-common -dynamic -arch x86_64 -arch i386 -g -O0 -pipe -fno-common -fno-strict-aliasing -fwrapv -mno-fused-madd -DENABLE_DTRACE -DMACOSX -Wall -Wstrict-prototypes -Wshorten-64-to-32 -g -fwrapv -O0 -Wall -Wstrict-prototypes -DENABLE_DTRACE -arch x86_64 -arch i386 -pipe -I/System/Library/Frameworks/Python.framework/Versions/2.7/include/python2.7 -c ctff.c -o tff/ctff.o
+	cc -bundle -undefined dynamic_lookup -arch x86_64 -g -arch i386 -Wl,-F. tff/ctff.o -o tff/ctff.so
+
 build: smoketest
 	$(PYTHON) setup.py sdist
 	python2.6 setup.py bdist_egg

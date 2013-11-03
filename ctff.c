@@ -19,6 +19,7 @@
 
 #include <Python.h>
 #include <structmember.h>
+#include <pthread.h>
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -106,7 +107,7 @@ DefaultScanner_next(DefaultScanner *self, PyObject *unused)
     if(~c & 0x80) {
         /* 0xxxxxxx */
         code_point = c;
-    goto valid;
+        goto valid;
     } else if((c & 0xe0) == 0xc0) {
         /* 110xxxxx */
         code_point = c & 0x1F;
@@ -125,8 +126,10 @@ DefaultScanner_next(DefaultScanner *self, PyObject *unused)
 
     for(i = n, ++p; i > 0; --i, ++length, ++p) {
         c = *p;
-        if((c & 0xc0) != 0x80) /* 10xxxxxx */
+        if((c & 0xc0) != 0x80) {
+            /* 10xxxxxx */
             goto invalid;
+        }
         code_point <<= 6;
         code_point |= c & 0x3F;
     }
@@ -259,7 +262,22 @@ typedef struct _DefaultParser {
     size_t ibytes_length;
     PyObject **pbytes;
     size_t pbytes_length;
+    pthread_mutex_t mutex;
 } DefaultParser;
+
+PyObject *str_assign;
+PyObject *str_dispatch_char;
+PyObject *str_dispatch_invalid;
+PyObject *str_dispatch_esc;
+PyObject *str_dispatch_csi;
+PyObject *str_dispatch_control_string;
+PyObject *str_dispatch_ss3;
+PyObject *str_dispatch_ss2;
+PyObject *str_code_esc;
+PyObject *str_code_bracket;
+PyObject *str_code_o;
+PyObject *str_code_n;
+PyObject *seq_empty;
 
 /** allocator */
 static PyObject *
@@ -276,7 +294,7 @@ DefaultParser_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     self->ibytes_length = 0;
     self->pbytes = malloc(sizeof(PyObject *) * buf_size);
     self->pbytes_length = 0;
-
+    pthread_mutex_init(&self->mutex, 0);
     return (PyObject *)self;
 }
 
@@ -285,9 +303,9 @@ DefaultParser_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 static void
 DefaultParser_dealloc(DefaultParser *self)
 {
-    Py_XDECREF(self->context);
     free(self->ibytes);
     free(self->pbytes);
+    pthread_mutex_destroy(&self->mutex);
     self->ob_type->tp_free((PyObject*)self);
 }
 
@@ -296,7 +314,6 @@ DefaultParser_dealloc(DefaultParser *self)
 static int
 DefaultParser_init(DefaultParser *self, PyObject *args, PyObject *kwds)
 {
-    /* Py_INCREF(self); */
     return 0;
 }
 
@@ -328,52 +345,35 @@ DefaultParser_reset(DefaultParser *self)
 static PyObject *
 DefaultParser_parse(DefaultParser *self, PyObject *data)
 {
-    PyObject *context = self->context;
-    PyObject **ibytes = self->ibytes;
-    size_t ibytes_length = self->ibytes_length;
-    PyObject **pbytes = self->pbytes;
-    size_t pbytes_length = self->pbytes_length;
-    PARSE_STATE state = self->state;
     PyObject *iter;
     PyObject *next_char;
     PyObject *seq, *seq2;
-    PyObject *assign = PyString_FromString("assign");
-    PyObject *dispatch_char = PyString_FromString("dispatch_char");
-    PyObject *dispatch_invalid = PyString_FromString("dispatch_invalid");
-    PyObject *dispatch_esc = PyString_FromString("dispatch_esc");
-    PyObject *dispatch_csi = PyString_FromString("dispatch_csi");
-    PyObject *dispatch_control_string = PyString_FromString("dispatch_control_string");
-    PyObject *dispatch_ss3 = PyString_FromString("dispatch_ss3");
-    PyObject *dispatch_ss2 = PyString_FromString("dispatch_ss2");
-    PyObject *code_esc = PyLong_FromLong(0x1b);
-    PyObject *code_bracket = PyLong_FromLong(0x5b);
-    PyObject *code_o = PyLong_FromLong(0x4f);
-    PyObject *code_n = PyLong_FromLong(0x4e);
-
     long c;
     int i;
 
-    if (!PyObject_CallMethodObjArgs(context, assign, data, NULL)) {
+    pthread_mutex_lock(&self->mutex);
+
+    if (!PyObject_CallMethodObjArgs(self->context, str_assign, data, NULL)) {
         return NULL;
     }
-    iter = PyObject_GetIter(context);
+
+    iter = PyObject_GetIter(self->context);
     if (!iter) {
         return NULL;
     }
 
     while ((next_char = PyIter_Next(iter))) {
         c = PyInt_AS_LONG(next_char);
-
-        if (state == STATE_GROUND) {
+        if (self->state == STATE_GROUND) {
             if (c == 0x1b) { /* ESC */
-                ibytes_length = 0;
-                state = STATE_ESC;
+                self->ibytes_length = 0;
+                self->state = STATE_ESC;
             } else { /* control character */
-                if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                    goto error;
                 }
             }
-        } else if (state == STATE_ESC) {
+        } else if (self->state == STATE_ESC) {
             /*
              * - ISO-6429 independent escape sequense
              *
@@ -385,516 +385,520 @@ DefaultParser_parse(DefaultParser *self, PyObject *data)
              */
             if (c == 0x5b) { /* [ */
                 /*
-                    pbytes = []
-                    state = _STATE_CSI_PARAMETER
-		*/
-                pbytes_length = 0;
-                state = STATE_CSI_PARAMETER;
+                 *   pbytes = []
+                 *   state = _STATE_CSI_PARAMETER
+                 */
+                self->pbytes_length = 0;
+                self->state = STATE_CSI_PARAMETER;
             } else if (c == 0x5d) { /* ] */
-                pbytes[0] = next_char;
-                pbytes_length = 1;
-                state = STATE_OSC;
+                self->pbytes[0] = next_char;
+                self->pbytes_length = 1;
+                self->state = STATE_OSC;
             } else if (c == 0x4e) { /* N */
-                state = STATE_SS2;
+                self->state = STATE_SS2;
             } else if (c == 0x4f) { /* O */
-                state = STATE_SS3;
+                self->state = STATE_SS3;
             } else if (c == 0x50 || c == 0x58 || c == 0x5e || c == 0x5f) {
                 /* P(DCS) or X(SOS) or ^(PM) or _(APC) */
-                pbytes[0] = next_char;
-                pbytes_length = 1;
-                state = STATE_STR;
+                self->pbytes[0] = next_char;
+                self->pbytes_length = 1;
+                self->state = STATE_STR;
             } else if (c < 0x20) { /* control character */
                 if (c == 0x1b) { /* ESC */
-                    seq = PyTuple_Pack(1, code_esc);
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                        return NULL;
+                    seq = PyTuple_Pack(1, str_code_esc);
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                        goto error;
                     }
-                    ibytes_length = 0;
-                    state = STATE_ESC;
+                    self->ibytes_length = 0;
+                    self->state = STATE_ESC;
                 } else if (c == 0x18 || c == 0x1a) {
-                    seq = PyTuple_Pack(1, code_esc);
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                        return NULL;
+                    seq = PyTuple_Pack(1, str_code_esc);
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                        goto error;
                     }
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                        return NULL;
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                        goto error;
                     }
-                    state = STATE_GROUND;
+                    self->state = STATE_GROUND;
                 } else {
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                        return NULL;
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                        goto error;
                     }
                 }
             } else if (c <= 0x2f) { /* SP to / */
-                ibytes[ibytes_length++] = next_char;
-                state = STATE_ESC_INTERMEDIATE;
+                self->ibytes[self->ibytes_length++] = next_char;
+                self->state = STATE_ESC_INTERMEDIATE;
             } else if (c <= 0x7e) { /* ~ */
-                PyTuple_New(ibytes_length);
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i, ibytes[i]);
+                seq = PyTuple_New(self->ibytes_length);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i, self->ibytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_esc, seq, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_esc, seq, next_char, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else if (c == 0x7f) { /* control character */
-                if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                    goto error;
                 }
             } else {
-                seq = PyTuple_Pack(1, code_esc, next_char);
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                seq = PyTuple_Pack(1, str_code_esc, next_char);
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             }
-        } else if (state == STATE_CSI_PARAMETER) {
-            // parse control sequence
-            //
-            // CSI P ... P I ... I F
-            //     ^
+        } else if (self->state == STATE_CSI_PARAMETER) {
+            /*
+             * parse control sequence
+            
+             * CSI P ... P I ... I F
+             *     ^
+             */
             if (c > 0x7e) {
                 if (c == 0x7f) { /* control character */
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                        return NULL;
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                        goto error;
                     }
                 } else {
-                    seq = PyTuple_New(2 + pbytes_length);
-                    PyTuple_SET_ITEM(seq, 0, code_esc);
-                    PyTuple_SET_ITEM(seq, 1, code_bracket);
-                    for (i = 0; i < pbytes_length; ++i) {
-                        PyTuple_SET_ITEM(seq, i + 2, pbytes[i]);
+                    seq = PyTuple_New(2 + self->pbytes_length);
+                    PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                    PyTuple_SET_ITEM(seq, 1, str_code_bracket);
+                    for (i = 0; i < self->pbytes_length; ++i) {
+                        PyTuple_SET_ITEM(seq, i + 2, self->pbytes[i]);
                     }
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                        return NULL;
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                        goto error;
                     }
-                    state = STATE_GROUND;
+                    self->state = STATE_GROUND;
                 }
             } else if (c > 0x3f) { /* Final byte, @ to ~ */
-                seq = PyTuple_New(pbytes_length);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i, pbytes[i]);
+                seq = PyTuple_New(self->pbytes_length);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i, self->pbytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_csi, seq, PyTuple_New(0), next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_csi, seq, seq_empty, next_char, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else if (c > 0x2f) { /* parameter, 0 to ? */
-                pbytes[pbytes_length++] = next_char;
+                self->pbytes[self->pbytes_length++] = next_char;
             } else if (c > 0x1f) { /* intermediate, SP to / */
-                ibytes[ibytes_length++] = next_char;
-                state = STATE_CSI_INTERMEDIATE;
+                self->ibytes[self->ibytes_length++] = next_char;
+                self->state = STATE_CSI_INTERMEDIATE;
             } else if (c == 0x1b) { /* ESC */
                 /* control chars */
-                seq = PyTuple_New(2 + pbytes_length);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                PyTuple_SET_ITEM(seq, 1, code_bracket);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 2, pbytes[i]);
+                seq = PyTuple_New(2 + self->pbytes_length);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                PyTuple_SET_ITEM(seq, 1, str_code_bracket);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 2, self->pbytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                ibytes_length = 0;
-                state = STATE_ESC;
+                self->ibytes_length = 0;
+                self->state = STATE_ESC;
             } else if (c == 0x18 || c == 0x1a) { /* CAN, SUB */
-                seq = PyTuple_New(2 + pbytes_length);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                PyTuple_SET_ITEM(seq, 1, code_bracket);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 2, pbytes[i]);
+                seq = PyTuple_New(2 + self->pbytes_length);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                PyTuple_SET_ITEM(seq, 1, str_code_bracket);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 2, self->pbytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else {
-                if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                    goto error;
                 }
             }
-        } else if (state == STATE_CSI_INTERMEDIATE) {
-            // parse control sequence
-            //
-            // CSI P ... P I ... I F
-            //             ^
+        } else if (self->state == STATE_CSI_INTERMEDIATE) {
+            /*
+             * parse control sequence
+             *
+             * CSI P ... P I ... I F
+             *             ^
+             */
             if (c > 0x7e) {
-                if (c == 0x7f) { /* control character */
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                        return NULL;
+                if (c == 0x7f) {
+                    /* control character */
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                        goto error;
                     }
                 } else {
-                    seq = PyTuple_New(2 + pbytes_length + ibytes_length);
-                    PyTuple_SET_ITEM(seq, 0, code_esc);
-                    PyTuple_SET_ITEM(seq, 1, code_bracket);
-                    for (i = 0; i < pbytes_length; ++i) {
-                        PyTuple_SET_ITEM(seq, i + 2, pbytes[i]);
+                    seq = PyTuple_New(2 + self->pbytes_length + self->ibytes_length);
+                    PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                    PyTuple_SET_ITEM(seq, 1, str_code_bracket);
+                    for (i = 0; i < self->pbytes_length; ++i) {
+                        PyTuple_SET_ITEM(seq, i + 2, self->pbytes[i]);
                     }
-                    for (i = 0; i < ibytes_length; ++i) {
-                        PyTuple_SET_ITEM(seq, i + 2 + pbytes_length, ibytes[i]);
+                    for (i = 0; i < self->ibytes_length; ++i) {
+                        PyTuple_SET_ITEM(seq, i + 2 + self->pbytes_length, self->ibytes[i]);
                     }
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                        return NULL;
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                        goto error;
                     }
-                    state = STATE_GROUND;
+                    self->state = STATE_GROUND;
                 }
             } else if (c > 0x3f) { /* Final byte, @ to ~ */
-                seq = PyTuple_New(pbytes_length);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 2, pbytes[i]);
+                seq = PyTuple_New(self->pbytes_length);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i, self->pbytes[i]);
                 }
-                seq2 = PyTuple_New(ibytes_length);
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 2, ibytes[i]);
+                seq2 = PyTuple_New(self->ibytes_length);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i, self->ibytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_csi, seq, seq2, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_csi, seq, seq2, next_char, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else if (c > 0x2f) {
-                seq = PyTuple_New(2 + pbytes_length + ibytes_length + 1);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                PyTuple_SET_ITEM(seq, 1, code_bracket);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 2, pbytes[i]);
+                seq = PyTuple_New(2 + self->pbytes_length + self->ibytes_length + 1);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                PyTuple_SET_ITEM(seq, 1, str_code_bracket);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 2, self->pbytes[i]);
                 }
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 2 + pbytes_length, ibytes[i]);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 2 + self->pbytes_length, self->ibytes[i]);
                 }
-                PyTuple_SET_ITEM(seq, 2 + pbytes_length + ibytes_length, next_char);
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                PyTuple_SET_ITEM(seq, 2 + self->pbytes_length + self->ibytes_length, next_char);
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else if (c > 0x1f) { /* intermediate, SP to / */
-                ibytes[ibytes_length++] = next_char;
-                state = STATE_CSI_INTERMEDIATE;
+                self->ibytes[self->ibytes_length++] = next_char;
+                self->state = STATE_CSI_INTERMEDIATE;
             } else if (c == 0x1b) { /* ESC */
                 /* control chars */
-                seq = PyTuple_New(2 + pbytes_length + ibytes_length);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                PyTuple_SET_ITEM(seq, 1, code_bracket);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 2, pbytes[i]);
+                seq = PyTuple_New(2 + self->pbytes_length + self->ibytes_length);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                PyTuple_SET_ITEM(seq, 1, str_code_bracket);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 2, self->pbytes[i]);
                 }
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 2 + pbytes_length, ibytes[i]);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 2 + self->pbytes_length, self->ibytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                ibytes_length = 0;
-                state = STATE_ESC;
+                self->ibytes_length = 0;
+                self->state = STATE_ESC;
             } else if (c == 0x18 || c == 0x1a) {
-                seq = PyTuple_New(2 + pbytes_length + ibytes_length);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                PyTuple_SET_ITEM(seq, 1, code_bracket);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 2, pbytes[i]);
+                seq = PyTuple_New(2 + self->pbytes_length + self->ibytes_length);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                PyTuple_SET_ITEM(seq, 1, str_code_bracket);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 2, self->pbytes[i]);
                 }
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 2 + pbytes_length, ibytes[i]);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 2 + self->pbytes_length, self->ibytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else {
-                if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                    goto error;
                 }
             }
-        } else if (state == STATE_ESC_INTERMEDIATE) {
+        } else if (self->state == STATE_ESC_INTERMEDIATE) {
             if (c > 0x7e) {
                 if (c == 0x7f) { /* control character */
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                        return NULL;
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                        goto error;
                     }
                 } else {
-                    seq = PyTuple_New(1 + ibytes_length + 1);
-                    PyTuple_SET_ITEM(seq, 0, code_esc);
-                    for (i = 0; i < ibytes_length; ++i) {
-                        PyTuple_SET_ITEM(seq, i + 1, ibytes[i]);
+                    seq = PyTuple_New(1 + self->ibytes_length + 1);
+                    PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                    for (i = 0; i < self->ibytes_length; ++i) {
+                        PyTuple_SET_ITEM(seq, i + 1, self->ibytes[i]);
                     }
-                    PyTuple_SET_ITEM(seq, 1 + ibytes_length, next_char);
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                        return NULL;
+                    PyTuple_SET_ITEM(seq, 1 + self->ibytes_length, next_char);
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                        goto error;
                     }
-                    state = STATE_GROUND;
+                    self->state = STATE_GROUND;
                 }
             } else if (c > 0x2f) {  /* 0 to ~, Final byte */
-                seq = PyTuple_New(ibytes_length);
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i, ibytes[i]);
+                seq = PyTuple_New(self->ibytes_length);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i, self->ibytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_esc, seq, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_esc, seq, next_char, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else if (c > 0x1f) { /*  SP to / */
-                ibytes[ibytes_length++] = next_char;
-                state = STATE_ESC_INTERMEDIATE;
+                self->ibytes[self->ibytes_length++] = next_char;
+                self->state = STATE_ESC_INTERMEDIATE;
             } else if (c == 0x1b) { /* ESC */
-                seq = PyTuple_New(1 + ibytes_length);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, 1 + i, ibytes[i]);
+                seq = PyTuple_New(1 + self->ibytes_length);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, 1 + i, self->ibytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                ibytes_length = 0;
-                state = STATE_ESC;
+                self->ibytes_length = 0;
+                self->state = STATE_ESC;
             } else if (c == 0x18 || c == 0x1a) {
-                seq = PyTuple_New(1 + ibytes_length);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, 1 + i, ibytes[i]);
+                seq = PyTuple_New(1 + self->ibytes_length);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, 1 + i, self->ibytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else {
-                if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                    goto error;
                 }
             }
-        } else if (state == STATE_OSC) {
+        } else if (self->state == STATE_OSC) {
             /* parse control string */
             if (c == 0x07) {
-                seq = PyTuple_New(ibytes_length);
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i, ibytes[i]);
+                seq = PyTuple_New(self->ibytes_length);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i, self->ibytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_control_string, pbytes[0], seq, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_control_string, *self->pbytes, seq, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else if (c < 0x08) {
-                seq = PyTuple_New(1 + pbytes_length + ibytes_length + 1);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1, pbytes[i]);
+                seq = PyTuple_New(1 + self->pbytes_length + self->ibytes_length + 1);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1, self->pbytes[i]);
                 }
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1 + pbytes_length, ibytes[i]);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1 + self->pbytes_length, self->ibytes[i]);
                 }
-                PyTuple_SET_ITEM(seq, 1 + pbytes_length + ibytes_length, next_char);
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                PyTuple_SET_ITEM(seq, 1 + self->pbytes_length + self->ibytes_length, next_char);
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else if (c < 0x0e) {
-                ibytes[ibytes_length++] = next_char;
+                self->ibytes[self->ibytes_length++] = next_char;
             } else if (c == 0x1b) {
-                state = STATE_OSC_ESC;
+                self->state = STATE_OSC_ESC;
             } else if (c < 0x20) {
-                seq = PyTuple_New(1 + pbytes_length + ibytes_length + 1);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1, pbytes[i]);
+                seq = PyTuple_New(1 + self->pbytes_length + self->ibytes_length + 1);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1, self->pbytes[i]);
                 }
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1 + pbytes_length, ibytes[i]);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1 + self->pbytes_length, self->ibytes[i]);
                 }
-                PyTuple_SET_ITEM(seq, 1 + pbytes_length + ibytes_length, next_char);
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                PyTuple_SET_ITEM(seq, 1 + self->pbytes_length + self->ibytes_length, next_char);
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else {
-                ibytes[ibytes_length++] = next_char;
+                self->ibytes[self->ibytes_length++] = next_char;
             }
-        } else if (state == STATE_STR) {
+        } else if (self->state == STATE_STR) {
             // parse control string
             // 00/08 - 00/13, 02/00 - 07/14
             //
             if (c < 0x08) {
-                seq = PyTuple_New(1 + pbytes_length + ibytes_length + 1);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1, pbytes[i]);
+                seq = PyTuple_New(1 + self->pbytes_length + self->ibytes_length + 1);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1, self->pbytes[i]);
                 }
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1 + pbytes_length, ibytes[i]);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1 + self->pbytes_length, self->ibytes[i]);
                 }
-                PyTuple_SET_ITEM(seq, 1 + pbytes_length + ibytes_length, next_char);
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                PyTuple_SET_ITEM(seq, 1 + self->pbytes_length + self->ibytes_length, next_char);
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else if (c < 0x0e) {
-                ibytes[ibytes_length++] = next_char;
+                self->ibytes[self->ibytes_length++] = next_char;
             } else if (c == 0x1b) {
-                state = STATE_STR_ESC;
+                self->state = STATE_STR_ESC;
             } else if (c < 0x20) {
-                seq = PyTuple_New(1 + pbytes_length + ibytes_length + 1);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1, pbytes[i]);
+                seq = PyTuple_New(1 + self->pbytes_length + self->ibytes_length + 1);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1, self->pbytes[i]);
                 }
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1 + pbytes_length, ibytes[i]);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1 + self->pbytes_length, self->ibytes[i]);
                 }
-                PyTuple_SET_ITEM(seq, 1 + pbytes_length + ibytes_length, next_char);
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                PyTuple_SET_ITEM(seq, 1 + self->pbytes_length + self->ibytes_length, next_char);
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else {
-                ibytes[ibytes_length++] = next_char;
+                self->ibytes[self->ibytes_length++] = next_char;
             }
-        } else if (state == STATE_OSC_ESC) {
+        } else if (self->state == STATE_OSC_ESC) {
             /* parse control string */
             if (c == 0x5c) {
-                seq = PyTuple_New(ibytes_length);
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i, ibytes[i]);
+                seq = PyTuple_New(self->ibytes_length);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i, self->ibytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_control_string, pbytes[0], seq, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_control_string, *self->pbytes, seq, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else {
-                seq = PyTuple_New(1 + pbytes_length + ibytes_length + 2);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1, pbytes[i]);
+                seq = PyTuple_New(1 + self->pbytes_length + self->ibytes_length + 2);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1, self->pbytes[i]);
                 }
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1 + pbytes_length, ibytes[i]);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1 + self->pbytes_length, self->ibytes[i]);
                 }
-                PyTuple_SET_ITEM(seq, 1 + pbytes_length + ibytes_length, code_esc);
-                PyTuple_SET_ITEM(seq, 1 + pbytes_length + ibytes_length + 1, next_char);
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                PyTuple_SET_ITEM(seq, 1 + self->pbytes_length + self->ibytes_length, str_code_esc);
+                PyTuple_SET_ITEM(seq, 1 + self->pbytes_length + self->ibytes_length + 1, next_char);
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             }
-        } else if (state == STATE_STR_ESC) {
+        } else if (self->state == STATE_STR_ESC) {
             // parse control string
             // 00/08 - 00/13, 02/00 - 07/14
             //
             if (c == 0x5c) {
-                seq = PyTuple_New(ibytes_length);
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i, ibytes[i]);
+                seq = PyTuple_New(self->ibytes_length);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i, self->ibytes[i]);
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_control_string, pbytes[0], seq, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_control_string, *self->pbytes, seq, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else {
-                seq = PyTuple_New(1 + pbytes_length + ibytes_length + 2);
-                PyTuple_SET_ITEM(seq, 0, code_esc);
-                for (i = 0; i < pbytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1, pbytes[i]);
+                seq = PyTuple_New(1 + self->pbytes_length + self->ibytes_length + 2);
+                PyTuple_SET_ITEM(seq, 0, str_code_esc);
+                for (i = 0; i < self->pbytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1, self->pbytes[i]);
                 }
-                for (i = 0; i < ibytes_length; ++i) {
-                    PyTuple_SET_ITEM(seq, i + 1 + pbytes_length, ibytes[i]);
+                for (i = 0; i < self->ibytes_length; ++i) {
+                    PyTuple_SET_ITEM(seq, i + 1 + self->pbytes_length, self->ibytes[i]);
                 }
-                PyTuple_SET_ITEM(seq, 1 + pbytes_length + ibytes_length, code_esc);
-                PyTuple_SET_ITEM(seq, 1 + pbytes_length + ibytes_length + 1, next_char);
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                PyTuple_SET_ITEM(seq, 1 + self->pbytes_length + self->ibytes_length, str_code_esc);
+                PyTuple_SET_ITEM(seq, 1 + self->pbytes_length + self->ibytes_length + 1, next_char);
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             }
-        } else if (state == STATE_SS3) {
+        } else if (self->state == STATE_SS3) {
             if (c < 0x20) { /* control character */
                 if (c == 0x1b) { /* ESC */
-                    seq = PyTuple_Pack(2, code_esc, code_o);
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                        return NULL;
+                    seq = PyTuple_Pack(2, str_code_esc, str_code_o);
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                        goto error;
                     }
-                    ibytes_length = 0;
-                    state = STATE_ESC;
+                    self->ibytes_length = 0;
+                    self->state = STATE_ESC;
                 } else if (c == 0x18 || c == 0x1a) {
-                    seq = PyTuple_Pack(2, code_esc, code_o);
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                        return NULL;
+                    seq = PyTuple_Pack(2, str_code_esc, str_code_o);
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                        goto error;
                     }
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                        return NULL;
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                        goto error;
                     }
-                    state = STATE_GROUND;
+                    self->state = STATE_GROUND;
                 } else {
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                        return NULL;
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                        goto error;
                     }
                 }
             } else if (c < 0x7f) {
-                if (!PyObject_CallMethodObjArgs(context, dispatch_ss3, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_ss3, next_char, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else {
-                seq = PyTuple_Pack(2, code_esc, code_o);
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                seq = PyTuple_Pack(2, str_code_esc, str_code_o);
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                    goto error;
                 }
             }
-        } else if (state == STATE_SS2) {
+        } else if (self->state == STATE_SS2) {
             if (c < 0x20) { /* control character */
                 if (c == 0x1b) { /* ESC */
-                    seq = PyTuple_Pack(2, code_esc, code_n);
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                        return NULL;
+                    seq = PyTuple_Pack(2, str_code_esc, str_code_n);
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                        goto error;
                     }
-                    ibytes_length = 0;
-                    state = STATE_ESC;
+                    self->ibytes_length = 0;
+                    self->state = STATE_ESC;
                 } else if (c == 0x18 || c == 0x1a) {
-                    seq = PyTuple_Pack(2, code_esc, code_n);
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                        return NULL;
+                    seq = PyTuple_Pack(2, str_code_esc, str_code_n);
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                        goto error;
                     }
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                        return NULL;
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                        goto error;
                     }
-                    state = STATE_GROUND;
+                    self->state = STATE_GROUND;
                 } else {
-                    if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                        return NULL;
+                    if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                        goto error;
                     }
                 }
             } else if (c < 0x7f) {
-                if (!PyObject_CallMethodObjArgs(context, dispatch_ss2, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_ss2, next_char, NULL)) {
+                    goto error;
                 }
-                state = STATE_GROUND;
+                self->state = STATE_GROUND;
             } else {
-                seq = PyTuple_Pack(2, code_esc, code_o);
-                if (!PyObject_CallMethodObjArgs(context, dispatch_invalid, seq, NULL)) {
-                    return NULL;
+                seq = PyTuple_Pack(2, str_code_esc, str_code_o);
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_invalid, seq, NULL)) {
+                    goto error;
                 }
-                if (!PyObject_CallMethodObjArgs(context, dispatch_char, next_char, NULL)) {
-                    return NULL;
+                if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
+                    goto error;
                 }
             }
         }
     }
+
+    pthread_mutex_unlock(&self->mutex);
     Py_DECREF(iter);
-
-    self->pbytes = pbytes;
-    self->pbytes_length = pbytes_length;
-    self->ibytes = ibytes;
-    self->ibytes_length = ibytes_length;
-    self->state = state;
-
     return Py_None;
+error:
+    pthread_mutex_unlock(&self->mutex);
+    Py_DECREF(iter);
+    return NULL;
 }
 
 
@@ -1272,6 +1276,20 @@ extern void initctff(void)
         return;
     }
     PyModule_AddObject(m, "DefaultScanner", (PyObject *)&DefaultScannerType);
+
+    str_assign = PyString_FromString("assign");
+    str_dispatch_char = PyString_FromString("dispatch_char");
+    str_dispatch_invalid = PyString_FromString("dispatch_invalid");
+    str_dispatch_esc = PyString_FromString("dispatch_esc");
+    str_dispatch_csi = PyString_FromString("dispatch_csi");
+    str_dispatch_control_string = PyString_FromString("dispatch_control_string");
+    str_dispatch_ss3 = PyString_FromString("dispatch_ss3");
+    str_dispatch_ss2 = PyString_FromString("dispatch_ss2");
+    str_code_esc = PyLong_FromLong(0x1b);
+    str_code_bracket = PyLong_FromLong(0x5b);
+    str_code_o = PyLong_FromLong(0x4f);
+    str_code_n = PyLong_FromLong(0x4e);
+    seq_empty = PyTuple_New(0);
 
     if (PyType_Ready(&DefaultParserType) < 0) {
         return;
