@@ -662,7 +662,7 @@ class Session:
               stdin=sys.stdin,
               stdout=sys.stdout,
               inputscanner=DefaultScanner(),
-              inputparser=DefaultParser(),
+              inputparser=OutputParser(),
               inputhandler=DefaultHandler(),
               outputscanner=DefaultScanner(),
               outputparser=OutputParser(),

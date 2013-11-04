@@ -368,7 +368,8 @@ DefaultParser_parse(DefaultParser *self, PyObject *data)
             if (c == 0x1b) { /* ESC */
                 self->ibytes_length = 0;
                 self->state = STATE_ESC;
-            } else { /* control character */
+            } else {
+		/* character */
                 if (!PyObject_CallMethodObjArgs(self->context, str_dispatch_char, next_char, NULL)) {
                     goto error;
                 }
@@ -890,13 +891,19 @@ DefaultParser_parse(DefaultParser *self, PyObject *data)
                 }
             }
         }
+        Py_DECREF(next_char);
     }
 
     pthread_mutex_unlock(&self->mutex);
     Py_DECREF(iter);
+
+    if (PyErr_Occurred()) {
+        return NULL;
+    }
     return Py_None;
 error:
     pthread_mutex_unlock(&self->mutex);
+    Py_DECREF(next_char);
     Py_DECREF(iter);
     return NULL;
 }
