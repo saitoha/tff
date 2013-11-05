@@ -1,4 +1,8 @@
 
+2013-11-5 Hayaki Saito <user@zuse.jp>
+
+    * Add some C implementation classes
+
 2013-2-2 Hayaki Saito <user@zuse.jp>
 
     * PEP-8 compatible style fix 
