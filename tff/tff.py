@@ -29,6 +29,7 @@ import select
 import errno
 import codecs
 import threading
+import logging
 # terminal filter framework interface
 from interface import EventObserver, EventDispatcher, OutputStream, PTY
 #from exception import NotHandleException, ParseException
@@ -303,10 +304,6 @@ class ParseContext(OutputStream, EventDispatcher):
 #
 class DefaultPTY(PTY):
 
-    _stdin_fileno = None
-    _backup_termios = None
-    _master = None
-
     def __init__(self, term, lang, command, stdin):
         self._stdin_fileno = stdin.fileno()
         backup = termios.tcgetattr(self._stdin_fileno)
@@ -324,8 +321,11 @@ class DefaultPTY(PTY):
         self._master = master
 
     def close(self):
-        self.restore_term()
-        os.close(self._master)
+        #self.restore_term()
+        try:
+            os.close(self._master)
+        except OSError, e:
+            logging.exception(e)
 
     def restore_term(self):
         termios.tcsetattr(self._stdin_fileno,
@@ -493,12 +493,6 @@ class Session:
         self._xfds = [stdin_fileno, main_master]
         self._resized = False
 
-    def switch_input_target(self):
-        if self._subprocess:
-            self._input_target_is_main = not self._input_target_is_main
-        else:
-            self._input_target_is_main = True
-
     def add_subtty(self, term, lang, command, row, col,
                    termenc, inputhandler, outputhandler, listener):
 
@@ -522,6 +516,7 @@ class Session:
                                DefaultParser(),
                                DefaultParser(),
                                listener)
+        self._input_target_is_main = False
 
     def process_input(self, data):
         if not self._esc_timer is None:
@@ -577,15 +572,19 @@ class Session:
         if self._subprocess:
             self._input_target_is_main = True
             sub_master = self._subprocess.fileno()
-            self._rfds.remove(sub_master)
-            self._xfds.remove(sub_master)
+            if sub_master in self._rfds:
+                self._rfds.remove(sub_master)
+            if sub_master in self._xfds:
+                self._xfds.remove(sub_master)
             self._subprocess.end()
+            self._subprocess.close()
             self._subprocess = None
             self.process_output("")
 
     def drive(self):
 
         def onresize(no, frame):
+            ''' handle resize '''
             self._resized = True
         try:
             signal.signal(signal.SIGWINCH, onresize)
@@ -598,9 +597,10 @@ class Session:
             while self._alive:
 
                 try:
-                    rfd, wfd, xfd = select.select(self._rfds,
-                                                  self._wfds,
-                                                  self._xfds)
+                    rfds = self._rfds
+                    wfds = self._wfds
+                    xfds = self._xfds
+                    rfd, wfd, xfd = select.select(rfds, wfds, xfds)
                     if xfd:
                         for fd in xfd:
                             if fd == main_master:
@@ -609,6 +609,7 @@ class Session:
                                 return
                             elif fd == self._subprocess.fileno():
                                 self.destruct_subprocess()
+                                continue
                             else:
                                 return
                     if self._resized:
@@ -654,8 +655,10 @@ class Session:
                 self.process_end()
             finally:
                 self.tty.close()
+                self._input_target_is_main = True
                 if self.subtty:
                     self.subtty.close()
+                    self.subtty = None
 
     def start(self,
               termenc,
