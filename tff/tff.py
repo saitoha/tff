@@ -478,11 +478,11 @@ class Terminal:
 #
 class Session:
 
-    _input_target_is_main = True
-    _alive = True
-    _subprocess = None
-
     def __init__(self, tty):
+
+        self._input_target_is_main = True
+        self._alive = True
+        self._subprocess = None
         self.terminal = Terminal(tty)
         self.tty = tty
         self.subtty = None
@@ -567,6 +567,12 @@ class Session:
             self._outputhandler.handle_resize(self._outputcontext, row, col)
         finally:
             self._resized = False
+
+    def focus_subprocess(self):
+        self._input_target_is_main = False
+
+    def blur_subprocess(self):
+        self._input_target_is_main = True
 
     def destruct_subprocess(self):
         if self._subprocess:
