@@ -570,6 +570,10 @@ class Session:
     def blur_subprocess(self, tty):
         self._input_target = self.tty
 
+    def destruct_subprocesses(self):
+        for fd in self._ttymap:
+            self.destruct_subprocess(fd)
+
     def destruct_subprocess(self, fd):
         if fd in self._ttymap:
             self._input_target = self.tty
