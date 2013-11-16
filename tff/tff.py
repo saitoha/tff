@@ -485,7 +485,6 @@ class Session:
         self.terminal = Terminal(tty)
         self.tty = tty
         self._input_target = tty
-        self.subttys = []
         main_master = self.tty.fileno()
         stdin_fileno = self.tty.stdin_fileno()
         self._rfds = [stdin_fileno, main_master]
@@ -501,7 +500,6 @@ class Session:
         subtty = DefaultPTY(term, lang, command, sys.stdin)
         subtty.resize(row, col)
         subprocess = Terminal(subtty)
-        self.subttys.insert(0, subtty)
 
         sub_master = subtty.fileno()
         self._rfds.append(sub_master)
@@ -666,9 +664,10 @@ class Session:
             finally:
                 self.tty.close()
                 self._input_target = self.tty
-                for tty in self.subttys:
-                    tty.close()
-                    self.subttys = []
+                for fd, process in enumerate(self._ttymap):
+                    process.end()
+                    process.close()
+                    self.ttymap = {}
 
     def start(self,
               termenc,
