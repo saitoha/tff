@@ -480,43 +480,43 @@ class Session:
 
     def __init__(self, tty):
 
-        self._input_target_is_main = True
         self._alive = True
-        self._subprocess = None
+        self._subprocesses = []
         self.terminal = Terminal(tty)
         self.tty = tty
-        self.subtty = None
+        self._input_target = tty
+        self.subttys = []
         main_master = self.tty.fileno()
         stdin_fileno = self.tty.stdin_fileno()
         self._rfds = [stdin_fileno, main_master]
         self._wfds = []
         self._xfds = [stdin_fileno, main_master]
         self._resized = False
+        self._ttymap = {}
 
     def add_subtty(self, term, lang, command, row, col,
                    termenc, inputhandler, outputhandler, listener):
 
-        if self._subprocess:
-            self._subprocess.close()
-            self._subprocess = None
-
         self.tty.restore_term()
         subtty = DefaultPTY(term, lang, command, sys.stdin)
         subtty.resize(row, col)
-        self._subprocess = Terminal(subtty)
-        self.subtty = subtty
+        subprocess = Terminal(subtty)
+        self.subttys.insert(0, subtty)
 
         sub_master = subtty.fileno()
         self._rfds.append(sub_master)
         self._xfds.append(sub_master)
+        self._ttymap[sub_master] = subprocess
 
-        self._subprocess.start(termenc,
-                               inputhandler,
-                               outputhandler,
-                               DefaultParser(),
-                               DefaultParser(),
-                               listener)
-        self._input_target_is_main = False
+        subprocess.start(termenc,
+                         inputhandler,
+                         outputhandler,
+                         DefaultParser(),
+                         DefaultParser(),
+                         listener)
+
+        self._input_target = subtty
+        return subtty
 
     def process_input(self, data):
         if not self._esc_timer is None:
@@ -568,23 +568,23 @@ class Session:
         finally:
             self._resized = False
 
-    def focus_subprocess(self):
-        self._input_target_is_main = False
+    def focus_subprocess(self, tty):
+        self._input_target = tty
 
-    def blur_subprocess(self):
-        self._input_target_is_main = True
+    def blur_subprocess(self, tty):
+        self._input_target = self.tty
 
-    def destruct_subprocess(self):
-        if self._subprocess:
-            self._input_target_is_main = True
-            sub_master = self._subprocess.fileno()
-            if sub_master in self._rfds:
-                self._rfds.remove(sub_master)
-            if sub_master in self._xfds:
-                self._xfds.remove(sub_master)
-            self._subprocess.end()
-            self._subprocess.close()
-            self._subprocess = None
+    def destruct_subprocess(self, fd):
+        if fd in self._ttymap:
+            self._input_target = self.tty
+            if fd in self._rfds:
+                self._rfds.remove(fd)
+            if fd in self._xfds:
+                self._xfds.remove(fd)
+            process = self._ttymap[fd]
+            process.end()
+            process.close()
+            del self._ttymap[fd]
             self.process_output("")
 
     def drive(self):
@@ -613,11 +613,12 @@ class Session:
                                 return
                             elif fd == stdin_fileno:
                                 return
-                            elif fd == self._subprocess.fileno():
-                                self.destruct_subprocess()
-                                continue
                             else:
-                                return
+                                if fd in self._ttymap:
+                                    self.destruct_subprocess(fd)
+                                    continue
+                                else:
+                                    return
                     if self._resized:
                         self._resized = False
                         row, col = self.tty.fitsize()
@@ -628,24 +629,27 @@ class Session:
                             self.process_output(data)
                         elif fd == stdin_fileno:
                             data = os.read(stdin_fileno, _BUFFER_SIZE)
-                            if self._input_target_is_main:
+                            if self._input_target == self.tty:
                                 self.process_input(data)
-                            elif self._subprocess:
-                                self._subprocess.on_write(data)
-                                self.process_input("")
                             else:
-                                self._input_target_is_main = True
-                        elif self._subprocess:
-                            self._subprocess.on_read(fd)
+                                target_fd = self._input_target.fileno()
+                                process = self._ttymap[target_fd]
+                                process.on_write(data)
+                                self.process_input("")
+                        elif self._ttymap:
+                            target_fd = self._input_target.fileno()
+                            process = self._ttymap[target_fd]
+                            process.on_read(fd)
                             self.process_output("")
                 except select.error, e:
                     no, msg = e
-                    self._input_target_is_main = True
+                    self._input_target = self.tty
                     if no == errno.EINTR:
                         # The call was interrupted by a signal
                         self._resized = True
                     elif no == errno.EBADF:
-                        self.destruct_subprocess()
+                        for fd in self._ttymap:
+                            self.destruct_subprocess(fd)
                     else:
                         raise e
         except OSError, e:
@@ -661,10 +665,10 @@ class Session:
                 self.process_end()
             finally:
                 self.tty.close()
-                self._input_target_is_main = True
-                if self.subtty:
-                    self.subtty.close()
-                    self.subtty = None
+                self._input_target = self.tty
+                for tty in self.subttys:
+                    tty.close()
+                    self.subttys = []
 
     def start(self,
               termenc,
@@ -699,8 +703,7 @@ class Session:
             pid, status = os.wait()
             if pid == self.tty.pid:
                 self._alive = False
-            self._input_target_is_main = True
-            #self.subtty = None
+            self._input_target = self.tty
 
         signal.signal(signal.SIGCHLD, onclose)
 
