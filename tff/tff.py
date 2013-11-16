@@ -481,7 +481,6 @@ class Session:
     def __init__(self, tty):
 
         self._alive = True
-        self._subprocesses = []
         self.terminal = Terminal(tty)
         self.tty = tty
         self._input_target = tty
@@ -496,25 +495,24 @@ class Session:
     def add_subtty(self, term, lang, command, row, col,
                    termenc, inputhandler, outputhandler, listener):
 
-        self.tty.restore_term()
-        subtty = DefaultPTY(term, lang, command, sys.stdin)
-        subtty.resize(row, col)
-        subprocess = Terminal(subtty)
+        tty = DefaultPTY(term, lang, command, sys.stdin)
+        tty.resize(row, col)
+        process = Terminal(tty)
 
-        sub_master = subtty.fileno()
-        self._rfds.append(sub_master)
-        self._xfds.append(sub_master)
-        self._ttymap[sub_master] = subprocess
+        fd = tty.fileno()
+        self._rfds.append(fd)
+        self._xfds.append(fd)
+        self._ttymap[fd] = process
 
-        subprocess.start(termenc,
-                         inputhandler,
-                         outputhandler,
-                         DefaultParser(),
-                         DefaultParser(),
-                         listener)
+        process.start(termenc,
+                      inputhandler,
+                      outputhandler,
+                      DefaultParser(),
+                      DefaultParser(),
+                      listener)
 
-        self._input_target = subtty
-        return subtty
+        self._input_target = tty
+        return tty
 
     def process_input(self, data):
         if not self._esc_timer is None:
@@ -664,10 +662,11 @@ class Session:
             finally:
                 self.tty.close()
                 self._input_target = self.tty
-                for fd, process in enumerate(self._ttymap):
+                for fd in self._ttymap:
+                    process = self._ttymap[fd]
                     process.end()
                     process.close()
-                    self.ttymap = {}
+                self.ttymap = {}
 
     def start(self,
               termenc,
