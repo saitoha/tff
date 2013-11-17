@@ -637,9 +637,10 @@ class Session:
                                 process.on_write(data)
                                 self.process_input("")
                         elif self._ttymap:
-                            target_fd = self._input_target.fileno()
-                            process = self._ttymap[target_fd]
-                            process.on_read(fd)
+                            ttymap = self._ttymap
+                            if fd in ttymap:
+                                process = ttymap[fd]
+                                process.on_read(fd)
                             self.process_output("")
                 except select.error, e:
                     no, msg = e
