@@ -567,7 +567,7 @@ class Session:
     def focus_subprocess(self, tty):
         self._input_target = tty
 
-    def blur_subprocess(self, tty):
+    def blur_subprocess(self):
         self._input_target = self.tty
 
     def destruct_subprocesses(self):
@@ -638,10 +638,11 @@ class Session:
                                 self.process_input("")
                         elif self._ttymap:
                             ttymap = self._ttymap
-                            if fd in ttymap:
-                                process = ttymap[fd]
+                            target_fd = self._input_target.fileno()
+                            if target_fd in ttymap:
+                                process = ttymap[target_fd]
                                 process.on_read(fd)
-                            self.process_output("")
+                                self.process_output("")
                 except select.error, e:
                     no, msg = e
                     self._input_target = self.tty
@@ -651,6 +652,13 @@ class Session:
                     elif no == errno.EBADF:
                         for fd in self._ttymap:
                             self.destruct_subprocess(fd)
+                    else:
+                        raise e
+                except OSError, e:
+                    no, msg = e
+                    if no == errno.EINTR:
+                        # The call was interrupted by a signal
+                        self._resized = True
                     else:
                         raise e
         except OSError, e:
