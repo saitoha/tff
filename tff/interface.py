@@ -18,8 +18,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # ***** END LICENSE BLOCK *****
 
-import abc
-
 
 ###############################################################################
 #
@@ -34,41 +32,30 @@ import abc
 class EventObserver:
     ''' adapt to event driven ECMA-35/48 parser model '''
 
-    __metaclass__ = abc.ABCMeta
-
-    @abc.abstractmethod
     def handle_start(self, context):
         pass
 
-    @abc.abstractmethod
     def handle_end(self, context):
         pass
 
-    @abc.abstractmethod
     def handle_csi(self, context, params, intermediate, final):
         pass
 
-    @abc.abstractmethod
     def handle_esc(self, context, prefix, final):
         pass
 
-    @abc.abstractmethod
     def handle_control_string(self, context, prefix, value):
         pass
 
-    @abc.abstractmethod
     def handle_char(self, context, c):
         pass
 
-    @abc.abstractmethod
     def handle_draw(self, context):
         pass
 
-    #@abc.abstractmethod
     #def handle_invalid(self, context, seq):
     #    return False
 
-    @abc.abstractmethod
     def handle_resize(self, context, row, col):
         pass
 
@@ -76,13 +63,9 @@ class EventObserver:
 class Scanner:
     ''' forward input iterator '''
 
-    __metaclass__ = abc.ABCMeta
-
-    @abc.abstractmethod
     def __iter__(self):
         yield
 
-    @abc.abstractmethod
     def assign(self, value, termenc):
         yield
 
@@ -90,13 +73,9 @@ class Scanner:
 class OutputStream:
     ''' abstruct TTY output stream '''
 
-    __metaclass__ = abc.ABCMeta
-
-    @abc.abstractmethod
     def write(self, c):
         pass
 
-    @abc.abstractmethod
     def flush(self):
         pass
 
@@ -104,21 +83,15 @@ class OutputStream:
 class EventDispatcher:
     ''' Dispatch interface of terminal sequence event oriented parser '''
 
-    __metaclass__ = abc.ABCMeta
-
-    @abc.abstractmethod
     def dispatch_esc(self, prefix, final):
         pass
 
-    @abc.abstractmethod
     def dispatch_csi(self, prefix, params, final):
         pass
 
-    @abc.abstractmethod
     def dispatch_control_string(self, prefix, value):
         pass
 
-    @abc.abstractmethod
     def dispatch_char(self, c):
         pass
 
@@ -126,9 +99,6 @@ class EventDispatcher:
 class Parser:
     ''' abstruct Parser '''
 
-    __metaclass__ = abc.ABCMeta
-
-    @abc.abstractmethod
     def parse(self, context):
         pass
 
@@ -136,30 +106,23 @@ class Parser:
 class PTY:
     ''' abstruct PTY device '''
 
-    @abc.abstractmethod
     def fitsize(self):
         pass
 
-    @abc.abstractmethod
     def resize(self, height, width):
         pass
 
-    @abc.abstractmethod
     def read(self):
         pass
 
-    @abc.abstractmethod
     def write(self, data):
         pass
 
-    @abc.abstractmethod
     def xon(self):
         pass
 
-    @abc.abstractmethod
     def xoff(self):
         pass
 
-    @abc.abstractmethod
     def drive(self):
         pass
