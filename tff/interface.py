@@ -33,96 +33,96 @@ class EventObserver:
     ''' adapt to event driven ECMA-35/48 parser model '''
 
     def handle_start(self, context):
-        pass
+        raise NotImplementedError("EventObserver::handle_start")
 
     def handle_end(self, context):
-        pass
+        raise NotImplementedError("EventObserver::handle_end")
 
     def handle_csi(self, context, params, intermediate, final):
-        pass
+        raise NotImplementedError("EventObserver::handle_csi")
 
     def handle_esc(self, context, prefix, final):
-        pass
+        raise NotImplementedError("EventObserver::handle_esc")
 
     def handle_control_string(self, context, prefix, value):
-        pass
+        raise NotImplementedError("EventObserver::handle_control_string")
 
     def handle_char(self, context, c):
-        pass
+        raise NotImplementedError("EventObserver::handle_char")
 
     def handle_draw(self, context):
-        pass
+        raise NotImplementedError("EventObserver::handle_draw")
 
     #def handle_invalid(self, context, seq):
     #    return False
 
     def handle_resize(self, context, row, col):
-        pass
+        raise NotImplementedError("EventObserver::handle_resize")
 
 
 class Scanner:
     ''' forward input iterator '''
 
     def __iter__(self):
-        yield
+        raise NotImplementedError("Scanner::__iter__")
 
     def assign(self, value, termenc):
-        yield
+        raise NotImplementedError("Scanner::assign")
 
 
 class OutputStream:
     ''' abstruct TTY output stream '''
 
     def write(self, c):
-        pass
+        raise NotImplementedError("OutputStream::write")
 
     def flush(self):
-        pass
+        raise NotImplementedError("OutputStream::flush")
 
 
 class EventDispatcher:
     ''' Dispatch interface of terminal sequence event oriented parser '''
 
     def dispatch_esc(self, prefix, final):
-        pass
+        raise NotImplementedError("EventDispatcher::dispatch_esc")
 
     def dispatch_csi(self, prefix, params, final):
-        pass
+        raise NotImplementedError("EventDispatcher::dispatch_csi")
 
     def dispatch_control_string(self, prefix, value):
-        pass
+        raise NotImplementedError("EventDispatcher::dispatch_control_string")
 
     def dispatch_char(self, c):
-        pass
+        raise NotImplementedError("EventDispatcher::dispatch_char")
 
 
 class Parser:
     ''' abstruct Parser '''
 
     def parse(self, context):
-        pass
+        raise NotImplementedError("Parser::parse")
 
 
 class PTY:
     ''' abstruct PTY device '''
 
     def fitsize(self):
-        pass
+        raise NotImplementedError("PTY::fitsize")
 
     def resize(self, height, width):
-        pass
+        raise NotImplementedError("PTY::resize")
 
     def read(self):
-        pass
+        raise NotImplementedError("PTY::read")
 
     def write(self, data):
-        pass
+        raise NotImplementedError("PTY::write")
 
     def xon(self):
-        pass
+        raise NotImplementedError("PTY::xon")
 
     def xoff(self):
-        pass
+        raise NotImplementedError("PTY::xoff")
 
     def drive(self):
-        pass
+        raise NotImplementedError("PTY::drive")
