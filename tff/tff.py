@@ -493,7 +493,8 @@ class Session:
         self._ttymap = {}
 
     def add_subtty(self, term, lang, command, row, col,
-                   termenc, inputhandler, outputhandler, listener):
+                   termenc, inputhandler,
+                   outputhandler, listener):
 
         tty = DefaultPTY(term, lang, command, sys.stdin)
         tty.resize(row, col)
