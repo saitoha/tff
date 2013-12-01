@@ -423,6 +423,13 @@ class DefaultPTY(PTY):
         #fcntl.ioctl(self._master, termios.TIOCSTART, 0)
         termios.tcflow(self._master, termios.TCOON)
 
+class MockParseContext(ParseContext):
+
+    def __init__(self):
+        from StringIO import StringIO
+        output = StringIO()
+        ParseContext.__init__(self, output)
+
 ###############################################################################
 #
 # Terminal
