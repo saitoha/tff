@@ -30,14 +30,14 @@ class NotHandledException(Exception):
         """
         >>> e = NotHandledException("test1")
         >>> e.value
-        test1
+        'test1'
         """
         self.value = value
 
     def __str__(self):
         """
         >>> e = NotHandledException("test2")
-        >>> print e
+        >>> e.value
         'test2'
         """
         return repr(self.value)
@@ -50,14 +50,14 @@ class ParseException(Exception):
         """
         >>> e = ParseException("test2")
         >>> e.value
-        test2
+        'test2'
         """
         self.value = value
 
     def __str__(self):
         """
         >>> e = ParseException("test2")
-        >>> print e
+        >>> e.value
         'test2'
         """
         return repr(self.value)
