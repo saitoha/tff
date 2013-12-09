@@ -448,7 +448,7 @@ class Terminal:
                                     scanner=DefaultScanner(),
                                     handler=inputhandler,
                                     buffering=False)
-        outputcontext = ParseContext(output=sys.stdout,
+        outputcontext = ParseContext(output=self.tty,
                                      termenc=termenc,
                                      scanner=DefaultScanner(),
                                      handler=outputhandler,
