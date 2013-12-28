@@ -168,8 +168,6 @@ class FilterMultiplexer(EventObserver):
 #
 class ParseContext(OutputStream, EventDispatcher):
 
-    __c1 = 0
-
     def __init__(self,
                  output,
                  termenc='UTF-8',
@@ -179,6 +177,8 @@ class ParseContext(OutputStream, EventDispatcher):
         self.__termenc = termenc
         self.__scanner = scanner
         self.__handler = handler
+        self._c1 = 0
+
         if buffering:
             try:
                 from cStringIO import StringIO
@@ -218,9 +218,9 @@ class ParseContext(OutputStream, EventDispatcher):
         elif c < 0xd800:
             self._output.write(unichr(c))
         elif c < 0xdc00:
-            self.__c1 = c
+            self._c1 = c
         elif c < 0xe000:
-            self._output.write(unichr(self.__c1) + unichr(c))
+            self._output.write(unichr(self._c1) + unichr(c))
         elif c < 0x10000:
             self._output.write(unichr(c))
         else:  # c > 0x10000
@@ -233,7 +233,7 @@ class ParseContext(OutputStream, EventDispatcher):
     def writestring(self, data):
         try:
             self._target_output.write(data)
-        except:
+        except Exception:
             self._output.write(data)
 
 # OutputStream
