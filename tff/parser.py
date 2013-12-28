@@ -75,7 +75,21 @@ class DefaultParser(Parser):
         self.__context = context
 
     def state_is_esc(self):
-        return self.__state == _STATE_ESC
+        return self.__state != _STATE_GROUND
+
+    def flush(self):
+        pbytes = self.__pbytes
+        ibytes = self.__ibytes
+        state = self.__state
+        context = self.__context
+        if state == _STATE_ESC:
+            context.dispatch_char(0x1b)
+        elif state == _STATE_ESC_INTERMEDIATE:
+            context.dispatch_invalid([0x1b] + ibytes)
+        elif state == _STATE_CSI_INTERMEDIATE:
+            context.dispatch_invalid([0x1b, 0x5b] + ibytes)
+        elif state == _STATE_CSI_PARAMETER:
+            context.dispatch_invalid([0x1b, 0x5b] + ibytes + pbytes)
 
     def reset(self):
         self.__state = _STATE_GROUND

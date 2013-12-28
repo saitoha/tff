@@ -537,8 +537,8 @@ class Session:
             self._outputcontext.flush()
         else:
             def dispatch_esc():
+                self._inputparser.flush()
                 self._inputparser.reset()
-                self._inputcontext.dispatch_char(0x1b)
                 self._inputhandler.handle_draw(self._outputcontext)
                 self._outputhandler.handle_draw(self._outputcontext)
                 #self._inputcontext.flush()
