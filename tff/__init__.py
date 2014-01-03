@@ -26,8 +26,8 @@
 
 # terminal filter framework
 __author__  = "Hayaki Saito (user@zuse.jp)"
-__version__ = "0.1.10"
-__license__ = "GPL v3"
+__version__ = "0.2.0"
+__license__ = "MIT"
 
 from interface import *
 from tff import *
