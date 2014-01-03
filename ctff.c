@@ -25,7 +25,7 @@
 #include <structmember.h>
 
 #if defined(TFF_USE_PTHREAD)
-#  include <pthread.h>*/
+#  include <pthread.h>
 #endif
 
 #include <stdlib.h>
