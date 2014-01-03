@@ -21,8 +21,7 @@ setup(name                  = 'tff',
                                'Topic :: Terminals',
                                'Environment :: Console',
                                'Intended Audience :: Developers',
-                               'License :: OSI Approved :: '
-                                   'GNU General Public License (GPL)',
+                               'License :: OSI Approved :: MIT License',
                                'Programming Language :: Python'
                                ],
       keywords              = 'terminal filter',
