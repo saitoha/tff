@@ -49,10 +49,10 @@ Following interfaces are exported from tff/interface.py
     Abstructed PTY device
 
 
-Exported Classes
-----------------
+License
+----------
+MIT License
 
-Comming soon...
 
 Dependents
 ----------
