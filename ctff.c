@@ -198,7 +198,7 @@ static PyMethodDef DefaultScanner_methods[] = {
 static PyMemberDef DefaultScanner_members[] = {
     { "_data", T_STRING, offsetof(DefaultScanner, p_data), READONLY, "" },
     { "_length", T_INT, offsetof(DefaultScanner, length), READONLY, "" },
-    { "_ucs4", T_BOOL, offsetof(DefaultScanner, ucs4), READONLY, "" },
+    { "_ucs4", T_INT, offsetof(DefaultScanner, ucs4), READONLY, "" },
     { NULL }  /* Sentinel */
 };
 
