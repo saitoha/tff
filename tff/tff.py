@@ -509,6 +509,9 @@ class Terminal:
         if self._listener:
             self._listener.handle_end(context)
 
+    def resize(self, row, col):
+        self.tty.resize(row, col)
+
     def fitsize(self):
         return self.tty.fitsize()
 
