@@ -332,6 +332,7 @@ class DefaultPTY(PTY):
             os.close(self._master)
         except OSError, e:
             logging.exception(e)
+            logging.info("DefaultPTY.close: master=%d" % self._master)
 
     def restore_term(self):
         termios.tcsetattr(self._stdin_fileno,
@@ -443,90 +444,95 @@ class MockParseContext(ParseContext):
 class Terminal:
 
     tty = None
+    _esc_timer = None
 
     def __init__(self, tty):
         self.tty = tty
+        self._listener = None
 
-    def start(self, termenc, inputhandler, outputhandler, inputparser, outputparser, listener):
+    def start(self, termenc,
+              inputhandler, outputhandler,
+              inputparser, outputparser,
+              inputscanner, outputscanner,
+              listener=None,
+              buffering=False,
+              stdout=sys.stdout):
 
         inputcontext = ParseContext(output=self.tty,
                                     termenc=termenc,
-                                    scanner=DefaultScanner(),
+                                    scanner=inputscanner,
                                     handler=inputhandler,
-                                    buffering=False)
-        outputcontext = ParseContext(output=self.tty,
+                                    buffering=buffering)
+        outputcontext = ParseContext(output=stdout,
                                      termenc=termenc,
-                                     scanner=DefaultScanner(),
+                                     scanner=outputscanner,
                                      handler=outputhandler,
-                                     buffering=False)
+                                     buffering=buffering)
 
+        inputparser.init(inputcontext)
+        outputparser.init(outputcontext)
+
+        self._inputhandler = inputhandler
+        self._outputhandler = outputhandler
         self._inputparser = inputparser
         self._outputparser = outputparser
-        self._listener = listener
-        self._inputparser.init(inputcontext)
-        self._outputparser.init(outputcontext)
-        listener.handle_start(outputcontext)
+        self._inputcontext = inputcontext
         self._outputcontext = outputcontext
+        self._listener = listener
+        if listener:
+            listener.handle_start(outputcontext)
+
+    def getpid(self):
+        return self.tty.pid
+
+    def is_alive(self):
+        return self.tty is not None 
 
     def fileno(self):
         return self.tty.fileno()
 
-    def close(self):
-        self.tty.close()
+    def stdin_fileno(self):
+        return self.tty.stdin_fileno()
 
-    def end(self):
-        self._listener.handle_end(self._outputcontext)
+    def read(self):
+        return self.tty.read()
+
+    def write(self, data):
+        self.tty.write(data)
+
+    def close(self):
+        if self.tty is not None:
+            self.tty.close()
+            self.tty = None
+
+    def end(self, context):
+        if self._listener:
+            self._listener.handle_end(context)
+
+    def fitsize(self):
+        return self.tty.fitsize()
 
     def on_write(self, data):
         self._inputparser.parse(data)
 
-    def on_read(self, fd):
-        if fd == self.tty.fileno():
-            data = self.tty.read()
-            self._outputparser.parse(data)
+    def process_start(self):
+        self._inputhandler.handle_start(self._inputcontext)
+        self._outputhandler.handle_start(self._outputcontext)
+        self._inputhandler.handle_draw(self._outputcontext)
+        self._outputhandler.handle_draw(self._outputcontext)
+        #self._inputcontext.flush()
+        self._outputcontext.flush()
 
-###############################################################################
-#
-# Session
-#
-class Session:
+    def process_end(self):
+        self._inputhandler.handle_end(self._inputcontext)
+        self._outputhandler.handle_end(self._outputcontext)
 
-    def __init__(self, tty):
-
-        self._alive = True
-        self.terminal = Terminal(tty)
-        self.tty = tty
-        self._input_target = tty
-        main_master = self.tty.fileno()
-        stdin_fileno = self.tty.stdin_fileno()
-        self._rfds = [stdin_fileno, main_master]
-        self._wfds = []
-        self._xfds = [stdin_fileno, main_master]
-        self._resized = False
-        self._ttymap = {}
-
-    def add_subtty(self, term, lang, command, row, col,
-                   termenc, inputhandler,
-                   outputhandler, listener):
-
-        tty = DefaultPTY(term, lang, command, sys.stdin)
-        tty.resize(row, col)
-        process = Terminal(tty)
-
-        fd = tty.fileno()
-        self._rfds.append(fd)
-        self._xfds.append(fd)
-        self._ttymap[fd] = process
-
-        process.start(termenc,
-                      inputhandler,
-                      outputhandler,
-                      DefaultParser(),
-                      DefaultParser(),
-                      listener)
-
-        self._input_target = tty
-        return tty
+    def process_resize(self, row, col):
+        try:
+            self._inputhandler.handle_resize(self._inputcontext, row, col)
+            self._outputhandler.handle_resize(self._outputcontext, row, col)
+        finally:
+            self._resized = False
 
     def process_input(self, data):
         if not self._esc_timer is None:
@@ -552,18 +558,6 @@ class Session:
             self._esc_timer = threading.Timer(_ESC_TIMEOUT, dispatch_esc)
             self._esc_timer.start()
 
-    def process_start(self):
-        self._inputhandler.handle_start(self._inputcontext)
-        self._outputhandler.handle_start(self._outputcontext)
-        self._inputhandler.handle_draw(self._outputcontext)
-        self._outputhandler.handle_draw(self._outputcontext)
-        #self._inputcontext.flush()
-        self._outputcontext.flush()
-
-    def process_end(self):
-        self._inputhandler.handle_end(self._inputcontext)
-        self._outputhandler.handle_end(self._outputcontext)
-
     def process_output(self, data):
         self._outputparser.parse(data)
         self._inputhandler.handle_draw(self._outputcontext)
@@ -571,12 +565,51 @@ class Session:
         #self._inputcontext.flush()
         self._outputcontext.flush()
 
-    def process_resize(self, row, col):
-        try:
-            self._inputhandler.handle_resize(self._inputcontext, row, col)
-            self._outputhandler.handle_resize(self._outputcontext, row, col)
-        finally:
-            self._resized = False
+    def on_read(self, data):
+        self._outputparser.parse(data)
+
+
+###############################################################################
+#
+# Session
+#
+class Session:
+
+    def __init__(self, tty):
+
+        self._alive = True
+        self.tty = Terminal(tty)
+        self._input_target = self.tty
+        stdin_fileno = self.tty.stdin_fileno()
+        self._rfds = [stdin_fileno]
+        self._xfds = [stdin_fileno]
+        self._resized = False
+        self._ttymap = {}
+
+    def add_subtty(self, term, lang, command, row, col,
+                   termenc, inputhandler,
+                   outputhandler, listener):
+
+        tty = DefaultPTY(term, lang, command, sys.stdin)
+        tty.resize(row, col)
+        process = Terminal(tty)
+
+        fd = tty.fileno()
+        self._rfds.append(fd)
+        self._xfds.append(fd)
+        self._ttymap[fd] = process
+
+        process.start(termenc,
+                      inputhandler,
+                      outputhandler,
+                      DefaultParser(),
+                      DefaultParser(),
+                      DefaultScanner(),
+                      DefaultScanner(),
+                      listener)
+
+        self._input_target = process
+        return process
 
     def focus_subprocess(self, tty):
         self._input_target = tty
@@ -596,70 +629,57 @@ class Session:
             if fd in self._xfds:
                 self._xfds.remove(fd)
             process = self._ttymap[fd]
-            process.end()
+            process.end(self._outputcontext)
             process.close()
             del self._ttymap[fd]
-            self.process_output("")
+            self.tty.process_output("")
 
     def drive(self):
 
         def onresize(no, frame):
             ''' handle resize '''
             self._resized = True
+
         try:
             signal.signal(signal.SIGWINCH, onresize)
         except ValueError:
             pass
 
-        main_master = self.tty.fileno()
         stdin_fileno = self.tty.stdin_fileno()
         try:
             while self._alive:
-
                 try:
-                    rfds = self._rfds
-                    wfds = self._wfds
-                    xfds = self._xfds
-                    rfd, wfd, xfd = select.select(rfds, wfds, xfds)
+                    rfd, wfd, xfd = select.select(self._rfds, [], self._xfds, 0.6)
                     if xfd:
                         for fd in xfd:
-                            if fd == main_master:
-                                return
-                            elif fd == stdin_fileno:
-                                return
-                            else:
-                                if fd in self._ttymap:
-                                    self.destruct_subprocess(fd)
-                                    continue
-                                else:
-                                    return
+                            if fd in self._ttymap:
+                                self.destruct_subprocess(fd)
+                                continue
                     if self._resized:
                         self._resized = False
                         row, col = self.tty.fitsize()
-                        self.process_resize(row, col)
-                    for fd in rfd:
-                        if fd == main_master:
-                            data = self.tty.read()
-                            self.process_output(data)
-                        elif fd == stdin_fileno:
-                            data = os.read(stdin_fileno, _BUFFER_SIZE)
-                            if self._input_target == self.tty:
-                                self.process_input(data)
-                            else:
+                        self.tty.process_resize(row, col)
+                    if rfd:
+                        for fd in rfd:
+                            if fd == stdin_fileno:
+                                data = os.read(stdin_fileno, _BUFFER_SIZE)
                                 target_fd = self._input_target.fileno()
                                 process = self._ttymap[target_fd]
-                                process.on_write(data)
-                                self.process_input("")
-                        elif self._ttymap:
-                            ttymap = self._ttymap
-                            target_fd = self._input_target.fileno()
-                            if target_fd in ttymap:
-                                process = ttymap[target_fd]
-                                process.on_read(fd)
-                                self.process_output("")
+                                process.process_input(data)
+                                self.tty.process_input("")
+                            elif self._ttymap:
+                                ttymap = self._ttymap
+                                if fd in ttymap:
+                                    process = ttymap[fd]
+                                    if self._input_target.is_alive():
+                                        if fd == self._input_target.fileno():
+                                            data = process.read()
+                                            process.on_read(data)
+                                            self.tty.process_output("")
+                    else:
+                        pass
                 except select.error, e:
                     no, msg = e
-                    self._input_target = self.tty
                     if no == errno.EINTR:
                         # The call was interrupted by a signal
                         self._resized = True
@@ -685,15 +705,12 @@ class Session:
                 raise e
         finally:
             try:
-                self.process_end()
+                self.tty.process_end()
             finally:
-                self.tty.close()
-                self._input_target = self.tty
                 for fd in self._ttymap:
                     process = self._ttymap[fd]
-                    process.end()
+                    process.end(self._outputcontext)
                     process.close()
-                self.ttymap = {}
 
     def start(self,
               termenc,
@@ -709,24 +726,28 @@ class Session:
 
         tty = self.tty
 
-        inputcontext = ParseContext(output=tty,
-                                    termenc=termenc,
-                                    scanner=inputscanner,
-                                    handler=inputhandler,
-                                    buffering=buffering)
-        outputcontext = ParseContext(output=stdout,
-                                     termenc=termenc,
-                                     scanner=outputscanner,
-                                     handler=outputhandler,
-                                     buffering=buffering)
-        inputparser.init(inputcontext)
-        outputparser.init(outputcontext)
+        fd = tty.fileno()
+        self._rfds.append(fd)
+        self._xfds.append(fd)
+        self._ttymap[tty.fileno()] = tty
+
+        tty.start(termenc,
+                  inputhandler,
+                  outputhandler,
+                  inputparser,
+                  outputparser,
+                  inputscanner,
+                  outputscanner,
+                  buffering=buffering,
+                  stdout=stdout)
 
         self._resized = False
 
         def onclose(no, frame):
             pid, status = os.wait()
-            if pid == self.tty.pid:
+            if not self.tty.is_alive():
+                self._alive = False
+            elif pid == self.tty.getpid():
                 self._alive = False
             self._input_target = self.tty
 
@@ -734,12 +755,11 @@ class Session:
 
         self._inputhandler = inputhandler
         self._outputhandler = outputhandler
-        self._inputcontext = inputcontext
-        self._outputcontext = outputcontext
+        self._inputcontext = tty._inputcontext
+        self._outputcontext = tty._outputcontext
         self._inputparser = inputparser
         self._outputparser = outputparser
 
-        self._esc_timer = None
         self.drive()
 
 
