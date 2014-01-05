@@ -505,9 +505,9 @@ class Process:
             self._tty.close()
             self._tty = None
 
-    def end(self, context):
+    def end(self):
         if self._listener:
-            self._listener.handle_end(context)
+            self._listener.handle_end(self._outputcontext)
 
     def resize(self, row, col):
         self._tty.resize(row, col)
@@ -614,15 +614,14 @@ class Session:
         self._input_target = process
         return process
 
+    def subprocess_is_active(self, process):
+        return self._input_target == process
+
     def focus_subprocess(self, process):
         self._input_target = process
 
     def blur_subprocess(self):
         self._input_target = self._process
-
-    def destruct_subprocesses(self):
-        for fd in self._process_map:
-            self.destruct_subprocess(fd)
 
     def destruct_subprocess(self, fd):
         if fd in self._process_map:
@@ -632,7 +631,7 @@ class Session:
             if fd in self._xfds:
                 self._xfds.remove(fd)
             process = self._process_map[fd]
-            process.end(self._outputcontext)
+            process.end()
             process.close()
             del self._process_map[fd]
             self._process.process_output("")
@@ -712,7 +711,7 @@ class Session:
             finally:
                 for fd in self._process_map:
                     process = self._process_map[fd]
-                    process.end(self._outputcontext)
+                    process.end()
                     process.close()
 
     def start(self,
@@ -755,13 +754,6 @@ class Session:
             self._input_target = process 
 
         signal.signal(signal.SIGCHLD, onclose)
-
-        self._inputhandler = inputhandler
-        self._outputhandler = outputhandler
-        self._inputcontext = process._inputcontext
-        self._outputcontext = process._outputcontext
-        self._inputparser = inputparser
-        self._outputparser = outputparser
 
         self.drive()
 
