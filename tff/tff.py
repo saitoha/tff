@@ -448,7 +448,6 @@ class Process:
 
     def __init__(self, tty):
         self._tty = tty
-        self._listener = None
 
     def start(self, termenc,
               inputhandler, outputhandler,
@@ -478,9 +477,8 @@ class Process:
         self._outputparser = outputparser
         self._inputcontext = inputcontext
         self._outputcontext = outputcontext
-        self._listener = listener
-        if listener:
-            listener.handle_start(outputcontext)
+        inputhandler.handle_start(outputcontext)
+        outputhandler.handle_start(outputcontext)
 
     def getpid(self):
         return self._tty.pid
@@ -506,8 +504,8 @@ class Process:
             self._tty = None
 
     def end(self):
-        if self._listener:
-            self._listener.handle_end(self._outputcontext)
+        self._inputhandler.handle_end(self._outputcontext)
+        self._outputhandler.handle_end(self._outputcontext)
 
     def resize(self, row, col):
         self._tty.resize(row, col)
