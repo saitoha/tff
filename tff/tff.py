@@ -631,18 +631,17 @@ class Session:
             logging.info("Switching focus: fileno=%d (main process)" % process.fileno())
             self._input_target = process
 
-    def destruct_process(self, fd):
-        if fd in self._process_map:
-            self._input_target = self._mainprocess
-            if fd in self._rfds:
-                self._rfds.remove(fd)
-            if fd in self._xfds:
-                self._xfds.remove(fd)
-            process = self._process_map[fd]
-            process.end()
-            process.close()
-            del self._process_map[fd]
-            self._mainprocess.process_output("")
+    def destruct_process(self, process):
+        fd = process.fileno()
+        if fd in self._rfds:
+            self._rfds.remove(fd)
+        if fd in self._xfds:
+            self._xfds.remove(fd)
+        process.end()
+        process.close()
+        del self._process_map[fd]
+        self.focus_process(self._mainprocess)
+        self._mainprocess.process_output("")
 
     def drive(self):
 
@@ -663,7 +662,8 @@ class Session:
                     if xfd:
                         for fd in xfd:
                             if fd in self._process_map:
-                                self.destruct_process(fd)
+                                process = self._process_map[fd]
+                                self.destruct_process(process)
                                 continue
                     if self._resized:
                         self._resized = False
@@ -696,7 +696,8 @@ class Session:
                         self._resized = True
                     elif no == errno.EBADF:
                         for fd in self._process_map:
-                            self.destruct_process(fd)
+                            process = self._process_map[fd]
+                            self.destruct_process(process)
                     else:
                         raise e
                 except OSError, e:
