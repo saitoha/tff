@@ -615,16 +615,16 @@ class Session:
         self._input_target = process
         return process
 
-    def subprocess_is_active(self, process):
+    def process_is_active(self, process):
         return self._input_target == process
 
-    def focus_subprocess(self, process):
+    def focus_process(self, process):
         self._input_target = process
 
-    def blur_subprocess(self):
+    def blur_process(self):
         self._input_target = self._mainprocess
 
-    def destruct_subprocess(self, fd):
+    def destruct_process(self, fd):
         if fd in self._process_map:
             self._input_target = self._mainprocess
             if fd in self._rfds:
@@ -656,7 +656,7 @@ class Session:
                     if xfd:
                         for fd in xfd:
                             if fd in self._process_map:
-                                self.destruct_subprocess(fd)
+                                self.destruct_process(fd)
                                 continue
                     if self._resized:
                         self._resized = False
@@ -689,7 +689,7 @@ class Session:
                         self._resized = True
                     elif no == errno.EBADF:
                         for fd in self._process_map:
-                            self.destruct_subprocess(fd)
+                            self.destruct_process(fd)
                     else:
                         raise e
                 except OSError, e:
