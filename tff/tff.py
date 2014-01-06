@@ -621,10 +621,15 @@ class Session:
         return self._input_target == process
 
     def focus_process(self, process):
-        self._input_target = process
+        if process.is_alive():
+            logging.info("Switching focus: fileno=%d" % process.fileno())
+            self._input_target = process
 
     def blur_process(self):
-        self._input_target = self._mainprocess
+        process = self._mainprocess
+        if process.is_alive():
+            logging.info("Switching focus: fileno=%d (main process)" % process.fileno())
+            self._input_target = process
 
     def destruct_process(self, fd):
         if fd in self._process_map:
