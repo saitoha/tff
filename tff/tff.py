@@ -663,10 +663,11 @@ class Session:
                         for fd in rfd:
                             if fd == stdin_fileno:
                                 data = os.read(stdin_fileno, _BUFFER_SIZE)
-                                target_fd = self._input_target.fileno()
-                                process = self._process_map[target_fd]
-                                process.process_input(data)
-                                self._process.process_input("")
+                                if self._input_target.is_alive():
+                                    target_fd = self._input_target.fileno()
+                                    process = self._process_map[target_fd]
+                                    process.process_input(data)
+                                    self._process.process_input("")
                             elif self._process_map:
                                 process_map = self._process_map
                                 if fd in process_map:
