@@ -770,6 +770,28 @@ class Session:
 
         self.drive()
 
+    def _init_process(self,
+                      process,
+                      termenc,
+                      inputhandler, outputhandler,
+                      inputparser, outputparser,
+                      inputscanner, outputscanner,
+                      buffering):
+
+        fd = process.fileno()
+        self._rfds.append(fd)
+        self._xfds.append(fd)
+        self._process_map[fd] = process
+
+        process.start(termenc,
+                      inputhandler,
+                      outputhandler,
+                      inputparser,
+                      outputparser,
+                      inputscanner,
+                      outputscanner,
+                      buffering)
+
 
 def _test():
     import doctest
