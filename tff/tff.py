@@ -581,7 +581,7 @@ class Session:
 
         self._alive = True
         self._mainprocess = Process(tty)
-        self._input_target = self._mainprocess
+        self.focus_process(self._mainprocess)
         stdin_fileno = self._mainprocess.stdin_fileno()
         self._rfds = [stdin_fileno]
         self._xfds = [stdin_fileno]
