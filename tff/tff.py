@@ -454,7 +454,6 @@ class Process:
               inputhandler, outputhandler,
               inputparser, outputparser,
               inputscanner, outputscanner,
-              listener=None,
               buffering=False,
               stdout=sys.stdout):
 
@@ -591,9 +590,13 @@ class Session:
     def add_subtty(self, term, lang,
                    command, row, col,
                    termenc,
-                   inputhandler,
-                   outputhandler,
-                   listener,
+                   inputhandler=DefaultHandler(),
+                   outputhandler=DefaultHandler(),
+                   listener=None,
+                   inputparser=DefaultParser(),
+                   outputparser=DefaultParser(),
+                   inputscanner=DefaultScanner(),
+                   outputscanner=DefaultScanner(),
                    buffering=False):
 
         tty = DefaultPTY(term, lang, command, sys.stdin)
