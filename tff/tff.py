@@ -592,7 +592,9 @@ class Session:
                    command, row, col,
                    termenc,
                    inputhandler,
-                   outputhandler, listener):
+                   outputhandler,
+                   listener,
+                   buffering=False):
 
         tty = DefaultPTY(term, lang, command, sys.stdin)
         tty.resize(row, col)
@@ -610,7 +612,7 @@ class Session:
                       DefaultParser(),
                       DefaultScanner(),
                       DefaultScanner(),
-                      listener)
+                      buffering=False)
 
         self._input_target = process
         return process
