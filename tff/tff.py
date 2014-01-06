@@ -437,6 +437,7 @@ class MockParseContext(ParseContext):
         output = StringIO()
         ParseContext.__init__(self, output)
 
+
 ###############################################################################
 #
 # Process
@@ -579,16 +580,18 @@ class Session:
     def __init__(self, tty):
 
         self._alive = True
-        self._process = Process(tty)
-        self._input_target = self._process
-        stdin_fileno = self._process.stdin_fileno()
+        self._mainprocess = Process(tty)
+        self._input_target = self._mainprocess
+        stdin_fileno = self._mainprocess.stdin_fileno()
         self._rfds = [stdin_fileno]
         self._xfds = [stdin_fileno]
         self._resized = False
         self._process_map = {}
 
-    def add_subtty(self, term, lang, command, row, col,
-                   termenc, inputhandler,
+    def add_subtty(self, term, lang,
+                   command, row, col,
+                   termenc,
+                   inputhandler,
                    outputhandler, listener):
 
         tty = DefaultPTY(term, lang, command, sys.stdin)
@@ -619,11 +622,11 @@ class Session:
         self._input_target = process
 
     def blur_subprocess(self):
-        self._input_target = self._process
+        self._input_target = self._mainprocess
 
     def destruct_subprocess(self, fd):
         if fd in self._process_map:
-            self._input_target = self._process
+            self._input_target = self._mainprocess
             if fd in self._rfds:
                 self._rfds.remove(fd)
             if fd in self._xfds:
@@ -632,7 +635,7 @@ class Session:
             process.end()
             process.close()
             del self._process_map[fd]
-            self._process.process_output("")
+            self._mainprocess.process_output("")
 
     def drive(self):
 
@@ -645,7 +648,7 @@ class Session:
         except ValueError:
             pass
 
-        stdin_fileno = self._process.stdin_fileno()
+        stdin_fileno = self._mainprocess.stdin_fileno()
         try:
             while self._alive:
                 try:
@@ -657,8 +660,8 @@ class Session:
                                 continue
                     if self._resized:
                         self._resized = False
-                        row, col = self._process.fitsize()
-                        self._process.process_resize(row, col)
+                        row, col = self._mainprocess.fitsize()
+                        self._mainprocess.process_resize(row, col)
                     if rfd:
                         for fd in rfd:
                             if fd == stdin_fileno:
@@ -667,7 +670,7 @@ class Session:
                                     target_fd = self._input_target.fileno()
                                     process = self._process_map[target_fd]
                                     process.process_input(data)
-                                    self._process.process_input("")
+                                    self._mainprocess.process_input("")
                             elif self._process_map:
                                 process_map = self._process_map
                                 if fd in process_map:
@@ -676,7 +679,7 @@ class Session:
                                         if fd == self._input_target.fileno():
                                             data = process.read()
                                             process.on_read(data)
-                                            self._process.process_output("")
+                                            self._mainprocess.process_output("")
                     else:
                         pass
                 except select.error, e:
@@ -706,7 +709,7 @@ class Session:
                 raise e
         finally:
             try:
-                self._process.process_end()
+                self._mainprocess.process_end()
             finally:
                 for fd in self._process_map:
                     process = self._process_map[fd]
@@ -725,32 +728,32 @@ class Session:
               outputhandler=DefaultHandler(),
               buffering=False):
 
-        process = self._process
+        mainprocess = self._mainprocess
 
-        fd = process.fileno()
+        fd = mainprocess.fileno()
         self._rfds.append(fd)
         self._xfds.append(fd)
-        self._process_map[process.fileno()] = process
+        self._process_map[fd] = mainprocess
 
-        process.start(termenc,
-                      inputhandler,
-                      outputhandler,
-                      inputparser,
-                      outputparser,
-                      inputscanner,
-                      outputscanner,
-                      buffering=buffering,
-                      stdout=stdout)
+        mainprocess.start(termenc,
+                          inputhandler,
+                          outputhandler,
+                          inputparser,
+                          outputparser,
+                          inputscanner,
+                          outputscanner,
+                          buffering=buffering,
+                          stdout=stdout)
 
         self._resized = False
 
         def onclose(no, frame):
             pid, status = os.wait()
-            if not process.is_alive():
+            if not mainprocess.is_alive():
                 self._alive = False
-            elif pid == process.getpid():
+            elif pid == mainprocess.getpid():
                 self._alive = False
-            self._input_target = process 
+            self._input_target = mainprocess 
 
         signal.signal(signal.SIGCHLD, onclose)
 
