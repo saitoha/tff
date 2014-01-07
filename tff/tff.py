@@ -591,33 +591,19 @@ class Session:
                    command, row, col,
                    termenc,
                    inputhandler=DefaultHandler(),
-                   outputhandler=DefaultHandler(),
-                   listener=None,
-                   inputparser=DefaultParser(),
-                   outputparser=DefaultParser(),
-                   inputscanner=DefaultScanner(),
-                   outputscanner=DefaultScanner(),
-                   buffering=False):
+                   outputhandler=DefaultHandler()):
 
         tty = DefaultPTY(term, lang, command, sys.stdin)
         tty.resize(row, col)
         process = Process(tty)
 
-        fd = tty.fileno()
-        self._rfds.append(fd)
-        self._xfds.append(fd)
-        self._process_map[fd] = process
-
-        process.start(termenc,
-                      inputhandler,
-                      outputhandler,
-                      DefaultParser(),
-                      DefaultParser(),
-                      DefaultScanner(),
-                      DefaultScanner(),
-                      buffering=False)
-
-        self._input_target = process
+        self._init_process(process,
+                           termenc,
+                           inputhandler, outputhandler,
+                           DefaultParser(), DefaultParser(),
+                           DefaultScanner(), DefaultScanner(),
+                           buffering=False)
+        self.focus_process(process)
         return process
 
     def process_is_active(self, process):
@@ -643,6 +629,7 @@ class Session:
         process.end()
         process.close()
         del self._process_map[fd]
+
         self.focus_process(self._mainprocess)
         self._mainprocess.process_output("")
 
@@ -741,20 +728,13 @@ class Session:
 
         mainprocess = self._mainprocess
 
-        fd = mainprocess.fileno()
-        self._rfds.append(fd)
-        self._xfds.append(fd)
-        self._process_map[fd] = mainprocess
-
-        mainprocess.start(termenc,
-                          inputhandler,
-                          outputhandler,
-                          inputparser,
-                          outputparser,
-                          inputscanner,
-                          outputscanner,
-                          buffering=buffering,
-                          stdout=stdout)
+        self._init_process(mainprocess,
+                           termenc,
+                           inputhandler, outputhandler,
+                           inputparser, outputparser,
+                           inputscanner, outputscanner,
+                           buffering)
+        self.focus_process(mainprocess)
 
         self._resized = False
 
@@ -764,7 +744,8 @@ class Session:
                 self._alive = False
             elif pid == mainprocess.getpid():
                 self._alive = False
-            self._input_target = mainprocess 
+            else:
+                self.focus_process(mainprocess)
 
         signal.signal(signal.SIGCHLD, onclose)
 
