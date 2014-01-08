@@ -569,6 +569,10 @@ class Process:
     def on_read(self, data):
         self._outputparser.parse(data)
 
+    def drain(self):
+        self._inputparser.reset()
+        self._inputcontext.assign('')
+
 
 ###############################################################################
 #
@@ -580,7 +584,7 @@ class Session:
 
         self._alive = True
         self._mainprocess = Process(tty)
-        self.focus_process(self._mainprocess)
+        self._input_target = self._mainprocess
         stdin_fileno = self._mainprocess.stdin_fileno()
         self._rfds = [stdin_fileno]
         self._xfds = [stdin_fileno]
@@ -612,12 +616,14 @@ class Session:
     def focus_process(self, process):
         if process.is_alive():
             logging.info("Switching focus: fileno=%d" % process.fileno())
+            self._input_target.drain()
             self._input_target = process
 
     def blur_process(self):
         process = self._mainprocess
         if process.is_alive():
             logging.info("Switching focus: fileno=%d (main process)" % process.fileno())
+            self._input_target.drain()
             self._input_target = process
 
     def destruct_process(self, process):

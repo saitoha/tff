@@ -67,9 +67,7 @@ class DefaultParser(Parser):
     ''' parse ESC/CSI/string seqneces '''
 
     def __init__(self):
-        self.__state = _STATE_GROUND
-        self.__pbytes = []
-        self.__ibytes = []
+        self.reset()
 
     def init(self, context):
         self.__context = context
@@ -93,6 +91,8 @@ class DefaultParser(Parser):
 
     def reset(self):
         self.__state = _STATE_GROUND
+        self.__pbytes = []
+        self.__ibytes = []
 
     def parse(self, data):
 
