@@ -610,6 +610,9 @@ class Session:
         self.focus_process(process)
         return process
 
+    def getactiveprocess(self):
+        return self._input_target
+
     def process_is_active(self, process):
         return self._input_target == process
 
