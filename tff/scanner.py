@@ -14,7 +14,7 @@ class DefaultScanner(Scanner):
         """
         >>> scanner = DefaultScanner()
         >>> scanner._ucs4
-        False
+        True
         """
         self._ucs4 = ucs4
 
