@@ -8,9 +8,9 @@ from interface import Scanner
 class DefaultScanner(Scanner):
     ''' scan input stream and iterate UCS code points '''
     _data = None
-    _ucs4 = False
+    _ucs4 = True
 
-    def __init__(self, ucs4=False):
+    def __init__(self, ucs4=True):
         """
         >>> scanner = DefaultScanner()
         >>> scanner._ucs4
