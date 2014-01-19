@@ -8,12 +8,13 @@ PYTHON27=python2.7
 SETUP_SCRIPT=setup.py
 RM=rm -rf
 PIP=pip
+CYTHON=cython
 
 .PHONY: smoketest nosetest build setuptools install uninstall clean update
 
 build: update_license_block smoketest
-	ln -sf tff.py ctff.py
-	cython ctff.pyx
+	ln -f tff.py /tmp/ctff.pyx
+	$(CYTHON) /tmp/ctff.pyx -o ctff.c
 	$(PYTHON) $(SETUP_SCRIPT) sdist
 	$(PYTHON25) $(SETUP_SCRIPT) bdist_egg
 	$(PYTHON26) $(SETUP_SCRIPT) bdist_egg
@@ -66,16 +67,16 @@ nosetest:
 	              --cover-package=sskk; \
 	fi
 
-update: clean smoketest
+update: clean test
 	$(PYTHON) $(SETUP_SCRIPT) register
 	$(PYTHON) $(SETUP_SCRIPT) sdist upload
 	$(PYTHON25) $(SETUP_SCRIPT) bdist_egg upload
 	$(PYTHON26) $(SETUP_SCRIPT) bdist_egg upload
 	$(PYTHON27) $(SETUP_SCRIPT) bdist_egg upload
 
-cleanupdate:
+cleanupdate: update
 	ssh zuse.jp "rm -rf $(PACKAGE_NAME)"
-	ssh zuse.jp "git clone git@github.com:saitoha/$(PACKAGE_NAME)"
+	ssh zuse.jp "git clone git@github.com:saitoha/$(PACKAGE_NAME) --recursive"
 	ssh zuse.jp "cd $(PACKAGE_NAME) && $(PYTHON26) $(SETUP_SCRIPT) bdist_egg upload"
 	ssh zuse.jp "cd $(PACKAGE_NAME) && $(PYTHON27) $(SETUP_SCRIPT) bdist_egg upload"
 
