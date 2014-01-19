@@ -72,3 +72,9 @@ update: clean smoketest
 	$(PYTHON26) $(SETUP_SCRIPT) bdist_egg upload
 	$(PYTHON27) $(SETUP_SCRIPT) bdist_egg upload
 
+cleanupdate:
+	ssh zuse.jp "rm -rf $(PACKAGE_NAME)"
+	ssh zuse.jp "git clone git@github.com:saitoha/$(PACKAGE_NAME)"
+	ssh zuse.jp "cd $(PACKAGE_NAME) && $(PYTHON26) $(SETUP_SCRIPT) bdist_egg upload"
+	ssh zuse.jp "cd $(PACKAGE_NAME) && $(PYTHON27) $(SETUP_SCRIPT) bdist_egg upload"
+
