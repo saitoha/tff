@@ -24,5 +24,8 @@
 # 
 # ***** END LICENSE BLOCK *****
 
-from tff import *
+try:
+    from ctff import *
+except ImportError:
+    from tff import *
 

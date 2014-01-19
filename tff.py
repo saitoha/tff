@@ -24,6 +24,11 @@
 # 
 # ***** END LICENSE BLOCK *****
 
+__author__  = "Hayaki Saito (user@zuse.jp)"
+__version__ = "0.2.2"
+__license__ = "MIT"
+
+
 import sys
 import os
 import termios
@@ -36,24 +41,585 @@ import errno
 import codecs
 import threading
 import logging
-# terminal filter framework interface
-from interface import EventObserver, EventDispatcher, OutputStream, PTY
-#from exception import NotHandleException, ParseException
 
 _BUFFER_SIZE = 8192
 _ESC_TIMEOUT = 0.5  # sec
 
-try:
-    from ctff import DefaultScanner
-except:
-    from scanner import DefaultScanner
+###############################################################################
+#
+# Exceptions
+#
+class NotHandledException(Exception):
+    ''' thrown when an unknown seqnence is detected '''
 
-try:
-    from ctff import DefaultParser as OutputParser
-except:
-    from parser import DefaultParser as OutputParser
- 
-from parser import DefaultParser
+    def __init__(self, value):
+        """
+        >>> e = NotHandledException("test1")
+        >>> e.value
+        'test1'
+        """
+        self.value = value
+
+    def __str__(self):
+        """
+        >>> e = NotHandledException("test2")
+        >>> e.value
+        'test2'
+        """
+        return repr(self.value)
+
+
+class ParseException(Exception):
+    ''' thrown when a parse error is detected '''
+
+    def __init__(self, value):
+        """
+        >>> e = ParseException("test2")
+        >>> e.value
+        'test2'
+        """
+        self.value = value
+
+    def __str__(self):
+        """
+        >>> e = ParseException("test2")
+        >>> e.value
+        'test2'
+        """
+        return repr(self.value)
+
+
+###############################################################################
+#
+# interfaces
+#
+# - EventObserver
+# - Scanner
+# - OutputStream
+# - Parser
+# - PTY
+#
+class EventObserver:
+    ''' adapt to event driven ECMA-35/48 parser model '''
+
+    def handle_start(self, context):
+        raise NotImplementedError("EventObserver::handle_start")
+
+    def handle_end(self, context):
+        raise NotImplementedError("EventObserver::handle_end")
+
+    def handle_csi(self, context, params, intermediate, final):
+        raise NotImplementedError("EventObserver::handle_csi")
+
+    def handle_esc(self, context, prefix, final):
+        raise NotImplementedError("EventObserver::handle_esc")
+
+    def handle_control_string(self, context, prefix, value):
+        raise NotImplementedError("EventObserver::handle_control_string")
+
+    def handle_char(self, context, c):
+        raise NotImplementedError("EventObserver::handle_char")
+
+    def handle_draw(self, context):
+        raise NotImplementedError("EventObserver::handle_draw")
+
+    def handle_invalid(self, context, seq):
+        raise NotImplementedError("EventObserver::handle_invalid")
+
+    def handle_resize(self, context, row, col):
+        raise NotImplementedError("EventObserver::handle_resize")
+
+
+class Scanner:
+    ''' forward input iterator '''
+
+    def __iter__(self):
+        raise NotImplementedError("Scanner::__iter__")
+
+    def assign(self, value, termenc):
+        raise NotImplementedError("Scanner::assign")
+
+
+class OutputStream:
+    ''' abstruct TTY output stream '''
+
+    def write(self, c):
+        raise NotImplementedError("OutputStream::write")
+
+    def flush(self):
+        raise NotImplementedError("OutputStream::flush")
+
+
+class EventDispatcher:
+    ''' Dispatch interface of terminal sequence event oriented parser '''
+
+    def dispatch_esc(self, prefix, final):
+        raise NotImplementedError("EventDispatcher::dispatch_esc")
+
+    def dispatch_csi(self, prefix, params, final):
+        raise NotImplementedError("EventDispatcher::dispatch_csi")
+
+    def dispatch_control_string(self, prefix, value):
+        raise NotImplementedError("EventDispatcher::dispatch_control_string")
+
+    def dispatch_char(self, c):
+        raise NotImplementedError("EventDispatcher::dispatch_char")
+
+
+class Parser:
+    ''' abstruct Parser '''
+
+    def parse(self, context):
+        raise NotImplementedError("Parser::parse")
+
+
+class PTY:
+    ''' abstruct PTY device '''
+
+    def fitsize(self):
+        raise NotImplementedError("PTY::fitsize")
+
+    def resize(self, height, width):
+        raise NotImplementedError("PTY::resize")
+
+    def read(self):
+        raise NotImplementedError("PTY::read")
+
+    def write(self, data):
+        raise NotImplementedError("PTY::write")
+
+    def xon(self):
+        raise NotImplementedError("PTY::xon")
+
+    def xoff(self):
+        raise NotImplementedError("PTY::xoff")
+
+    def drive(self):
+        raise NotImplementedError("PTY::drive")
+
+
+###############################################################################
+#
+# Simple Parser implementation
+#
+class SimpleParser(Parser):
+    ''' simple parser, don't parse ESC/CSI/string seqneces '''
+
+    class _MockContext:
+
+        def __init__(self):
+            self.output = []
+
+        def __iter__(self):
+            for i in [1, 2, 3, 4, 5]:
+                yield i
+
+        def dispatch_char(self, c):
+            self.output.append(c)
+
+    def parse(self, context):
+        """
+        >>> parser = SimpleParser()
+        >>> context = SimpleParser._MockContext()
+        >>> parser.parse(context)
+        >>> context.output
+        [1, 2, 3, 4, 5]
+        """
+        for c in context:
+            context.dispatch_char(c)
+
+
+###############################################################################
+#
+# Default Parser implementation
+#
+_STATE_GROUND = 0
+_STATE_ESC = 1
+_STATE_ESC_INTERMEDIATE = 2
+_STATE_CSI_PARAMETER = 3
+_STATE_CSI_INTERMEDIATE = 4
+_STATE_SS2 = 6
+_STATE_SS3 = 7
+_STATE_OSC = 8
+_STATE_OSC_ESC = 9
+_STATE_STR = 10
+_STATE_STR_ESC = 11
+
+
+class _MockHandler:
+
+    def handle_csi(self, context, parameter, intermediate, final):
+        print (parameter, intermediate, final)
+
+    def handle_esc(self, context, intermediate, final):
+        print (intermediate, final)
+
+    def handle_control_string(self, context, prefix, value):
+        print (prefix, value)
+
+    def handle_char(self, context, c):
+        print (c)
+
+
+class DefaultParser(Parser):
+    ''' parse ESC/CSI/string seqneces '''
+
+    def __init__(self):
+        self.reset()
+
+    def init(self, context):
+        self.__context = context
+
+    def state_is_esc(self):
+        return self.__state != _STATE_GROUND
+
+    def flush(self):
+        pbytes = self.__pbytes
+        ibytes = self.__ibytes
+        state = self.__state
+        context = self.__context
+        if state == _STATE_ESC:
+            context.dispatch_char(0x1b)
+        elif state == _STATE_ESC_INTERMEDIATE:
+            context.dispatch_invalid([0x1b] + ibytes)
+        elif state == _STATE_CSI_INTERMEDIATE:
+            context.dispatch_invalid([0x1b, 0x5b] + ibytes)
+        elif state == _STATE_CSI_PARAMETER:
+            context.dispatch_invalid([0x1b, 0x5b] + ibytes + pbytes)
+
+    def reset(self):
+        self.__state = _STATE_GROUND
+        self.__pbytes = []
+        self.__ibytes = []
+
+    def parse(self, data):
+
+        context = self.__context
+        context.assign(data)
+        pbytes = self.__pbytes
+        ibytes = self.__ibytes
+        state = self.__state
+        for c in context:
+
+            if state == _STATE_GROUND:
+                if c == 0x1b:  # ESC
+                    ibytes = []
+                    state = _STATE_ESC
+
+                else:  # control character
+                    context.dispatch_char(c)
+
+            elif state == _STATE_ESC:
+                #
+                # - ISO-6429 independent escape sequense
+                #
+                #     ESC F
+                #
+                # - ISO-2022 designation sequence
+                #
+                #     ESC I ... I F
+                #
+                if c == 0x5b:  # [
+                    pbytes = []
+                    state = _STATE_CSI_PARAMETER
+                elif c == 0x5d:  # ]
+                    pbytes = [c]
+                    state = _STATE_OSC
+                elif c == 0x4e:  # N
+                    state = _STATE_SS2
+                elif c == 0x4f:  # O
+                    state = _STATE_SS3
+                elif c == 0x50 or c == 0x58 or c == 0x5e or c == 0x5f:
+                    # P(DCS) or X(SOS) or ^(PM) or _(APC)
+                    pbytes = [c]
+                    state = _STATE_STR
+                elif c < 0x20:  # control character
+                    if c == 0x1b:  # ESC
+                        seq = [0x1b]
+                        context.dispatch_invalid(seq)
+                        ibytes = []
+                        state = _STATE_ESC
+                    elif c == 0x18 or c == 0x1a:
+                        seq = [0x1b]
+                        context.dispatch_invalid(seq)
+                        context.dispatch_char(c)
+                        state = _STATE_GROUND
+                    else:
+                        context.dispatch_char(c)
+                elif c <= 0x2f:  # SP to /
+                    ibytes.append(c)
+                    state = _STATE_ESC_INTERMEDIATE
+                elif c <= 0x7e:  # ~
+                    context.dispatch_esc(ibytes, c)
+                    state = _STATE_GROUND
+                elif c == 0x7f:  # control character
+                    context.dispatch_char(c)
+                else:
+                    seq = [0x1b, c]
+                    context.dispatch_invalid(seq)
+                    state = _STATE_GROUND
+
+            elif state == _STATE_CSI_PARAMETER:
+                # parse control sequence
+                #
+                # CSI P ... P I ... I F
+                #     ^
+                if c > 0x7e:
+                    if c == 0x7f:  # control character
+                        context.dispatch_char(c)
+                    else:
+                        seq = [0x1b, 0x5b] + pbytes
+                        context.dispatch_invalid(seq)
+                        state = _STATE_GROUND
+                elif c > 0x3f:  # Final byte, @ to ~
+                    context.dispatch_csi(pbytes, ibytes, c)
+                    state = _STATE_GROUND
+                elif c > 0x2f:  # parameter, 0 to ?
+                    pbytes.append(c)
+                elif c > 0x1f:  # intermediate, SP to /
+                    ibytes.append(c)
+                    state = _STATE_CSI_INTERMEDIATE
+
+                # control chars
+                elif c == 0x1b:  # ESC
+                    seq = [0x1b, 0x5b] + pbytes
+                    context.dispatch_invalid(seq)
+                    ibytes = []
+                    state = _STATE_ESC
+
+                elif c == 0x18 or c == 0x1a:  # CAN, SUB
+                    seq = [0x1b, 0x5b] + pbytes
+                    context.dispatch_invalid(seq)
+                    context.dispatch_char(c)
+                    state = _STATE_GROUND
+
+                else:
+                    context.dispatch_char(c)
+
+            elif state == _STATE_CSI_INTERMEDIATE:
+                # parse control sequence
+                #
+                # CSI P ... P I ... I F
+                #             ^
+                if c > 0x7e:
+                    if c == 0x7f:  # control character
+                        context.dispatch_char(c)
+                    else:
+                        seq = [0x1b, 0x5b] + pbytes + ibytes
+                        context.dispatch_invalid(seq)
+                        state = _STATE_GROUND
+                elif c > 0x3f:  # Final byte, @ to ~
+                    context.dispatch_csi(pbytes, ibytes, c)
+                    state = _STATE_GROUND
+                elif c > 0x2f:
+                    seq = [0x1b, 0x5b] + pbytes + ibytes + [c]
+                    context.dispatch_invalid(seq)
+                    state = _STATE_GROUND
+                elif c > 0x1f:  # intermediate, SP to /
+                    ibytes.append(c)
+                    state = _STATE_CSI_INTERMEDIATE
+
+                # control chars
+                elif c == 0x1b:  # ESC
+                    seq = [0x1b, 0x5b] + pbytes + ibytes
+                    context.dispatch_invalid(seq)
+                    ibytes = []
+                    state = _STATE_ESC
+                elif c == 0x18 or c == 0x1a:
+                    seq = [0x1b, 0x5b] + pbytes + ibytes
+                    context.dispatch_invalid(seq)
+                    context.dispatch_char(c)
+                    state = _STATE_GROUND
+                else:
+                    context.dispatch_char(c)
+
+            elif state == _STATE_ESC_INTERMEDIATE:
+                if c > 0x7e:
+                    if c == 0x7f:  # control character
+                        context.dispatch_char(c)
+                    else:
+                        seq = [0x1b] + ibytes + [c]
+                        context.dispatch_invalid(seq)
+                        state = _STATE_GROUND
+                elif c > 0x2f:  # 0 to ~, Final byte
+                    context.dispatch_esc(ibytes, c)
+                    state = _STATE_GROUND
+                elif c > 0x1f:  # SP to /
+                    ibytes.append(c)
+                    state = _STATE_ESC_INTERMEDIATE
+                elif c == 0x1b:  # ESC
+                    seq = [0x1b] + ibytes
+                    context.dispatch_invalid(seq)
+                    ibytes = []
+                    state = _STATE_ESC
+                elif c == 0x18 or c == 0x1a:
+                    seq = [0x1b] + ibytes
+                    context.dispatch_invalid(seq)
+                    context.dispatch_char(c)
+                    state = _STATE_GROUND
+                else:
+                    context.dispatch_char(c)
+
+            elif state == _STATE_OSC:
+                # parse control string
+                if c == 0x07:
+                    context.dispatch_control_string(pbytes[0], ibytes)
+                    state = _STATE_GROUND
+                elif c < 0x08:
+                    seq = [0x1b] + pbytes + ibytes + [c]
+                    context.dispatch_invalid(seq)
+                    state = _STATE_GROUND
+                elif c < 0x0e:
+                    ibytes.append(c)
+                elif c == 0x1b:
+                    state = _STATE_OSC_ESC
+                elif c < 0x20:
+                    seq = [0x1b] + pbytes + ibytes + [c]
+                    context.dispatch_invalid(seq)
+                    state = _STATE_GROUND
+                else:
+                    ibytes.append(c)
+
+            elif state == _STATE_STR:
+                # parse control string
+                # 00/08 - 00/13, 02/00 - 07/14
+                #
+                if c < 0x08:
+                    seq = [0x1b] + pbytes + ibytes + [c]
+                    context.dispatch_invalid(seq)
+                    state = _STATE_GROUND
+                elif c < 0x0e:
+                    ibytes.append(c)
+                elif c == 0x1b:
+                    state = _STATE_STR_ESC
+                elif c < 0x20:
+                    seq = [0x1b] + pbytes + ibytes + [c]
+                    context.dispatch_invalid(seq)
+                    state = _STATE_GROUND
+                else:
+                    ibytes.append(c)
+
+            elif state == _STATE_OSC_ESC:
+                # parse control string
+                if c == 0x5c:
+                    context.dispatch_control_string(pbytes[0], ibytes)
+                    state = _STATE_GROUND
+                else:
+                    seq = [0x1b] + pbytes + ibytes + [0x1b, c]
+                    context.dispatch_invalid(seq)
+                    state = _STATE_GROUND
+
+            elif state == _STATE_STR_ESC:
+                # parse control string
+                # 00/08 - 00/13, 02/00 - 07/14
+                #
+                if c == 0x5c:
+                    context.dispatch_control_string(pbytes[0], ibytes)
+                    state = _STATE_GROUND
+                else:
+                    seq = [0x1b] + pbytes + ibytes + [0x1b, c]
+                    context.dispatch_invalid(seq)
+                    state = _STATE_GROUND
+
+            elif state == _STATE_SS3:
+                if c < 0x20:  # control character
+                    if c == 0x1b:  # ESC
+                        seq = [0x1b, 0x4f]
+                        context.dispatch_invalid(seq)
+                        ibytes = []
+                        state = _STATE_ESC
+                    elif c == 0x18 or c == 0x1a:
+                        seq = [0x1b, 0x4f]
+                        context.dispatch_invalid(seq)
+                        context.dispatch_char(c)
+                        state = _STATE_GROUND
+                    else:
+                        context.dispatch_char(c)
+                elif c < 0x7f:
+                    context.dispatch_ss3(c)
+                    state = _STATE_GROUND
+                else:
+                    seq = [0x1b, 0x4f]
+                    context.dispatch_invalid(seq)
+                    context.dispatch_char(c)
+
+            elif state == _STATE_SS2:
+                if c < 0x20:  # control character
+                    if c == 0x1b:  # ESC
+                        seq = [0x1b, 0x4e]
+                        context.dispatch_invalid(seq)
+                        ibytes = []
+                        state = _STATE_ESC
+                    elif c == 0x18 or c == 0x1a:
+                        seq = [0x1b, 0x4e]
+                        context.dispatch_invalid(seq)
+                        context.dispatch_char(c)
+                        state = _STATE_GROUND
+                    else:
+                        context.dispatch_char(c)
+                elif c < 0x7f:
+                    context.dispatch_ss2(c)
+                    state = _STATE_GROUND
+                else:
+                    seq = [0x1b, 0x4f]
+                    context.dispatch_invalid(seq)
+                    context.dispatch_char(c)
+
+        self.__pbytes = pbytes
+        self.__ibytes = ibytes
+        self.__state = state
+
+
+
+###############################################################################
+#
+# Scanner implementation
+#
+class DefaultScanner(Scanner):
+    ''' scan input stream and iterate UCS code points '''
+    _data = None
+    _ucs4 = True
+
+    def __init__(self, ucs4=True):
+        """
+        >>> scanner = DefaultScanner()
+        >>> scanner._ucs4
+        True
+        """
+        self._ucs4 = ucs4
+
+    def assign(self, value, termenc):
+        """
+        >>> scanner = DefaultScanner()
+        >>> scanner.assign("01234", "ascii")
+        >>> scanner._data
+        u'01234'
+        """
+        self._data = unicode(value, termenc, 'ignore')
+
+    def __iter__(self):
+        """
+        >>> scanner = DefaultScanner()
+        >>> scanner.assign("abcde", "UTF-8")
+        >>> print [ c for c in scanner ]
+        [97, 98, 99, 100, 101]
+        """
+        if self._ucs4:
+            c1 = 0
+            for x in self._data:
+                c = ord(x)
+                if c >= 0xd800 and c <= 0xdbff:
+                    c1 = c - 0xd800
+                    continue
+                elif c1 != 0 and c >= 0xdc00 and c <= 0xdfff:
+                    c = 0x10000 + ((c1 << 10) | (c - 0xdc00))
+                    c1 = 0
+                yield c
+        else:
+            for x in self._data:
+                yield ord(x)
+
+
 
 ###############################################################################
 #
@@ -731,7 +1297,7 @@ class Session:
               inputparser=DefaultParser(),
               inputhandler=DefaultHandler(),
               outputscanner=DefaultScanner(),
-              outputparser=OutputParser(),
+              outputparser=DefaultParser(),
               outputhandler=DefaultHandler(),
               buffering=False):
 
