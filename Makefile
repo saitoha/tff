@@ -27,8 +27,7 @@ setup_environment:
     fi
 
 update_license_block:
-	chmod +x update_license
-	find . -type f | grep '\(.py\|.c\)$$' | xargs ./update_license
+	find . -type f | grep '\(.py\|.c\)$$' | xargs python tools/update_license
 
 setuptools:
 	$(PYTHON) -c "import setuptools" || \
