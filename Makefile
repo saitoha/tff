@@ -9,7 +9,6 @@ SETUP_SCRIPT=setup.py
 RM=rm -rf
 PIP=pip
 CYTHON=cython
-SIGNATURE=$$(python tff.py)
 
 .PHONY: smoketest nosetest build setuptools install uninstall clean update embed_signature
 
@@ -28,7 +27,7 @@ setup_environment:
     fi
 
 embed_signature:
-	sed -i .orig "s/^signature *=.*/signature   = '$(SIGNATURE)'/" tff.py
+	perl -pi -e "s/^signature *=.*/signature   = '$$(python tff.py)'/" tff.py
 
 update_license_block:
 	find . -type f | grep '\(.py\|.c\)$$' | xargs python tools/update_license
