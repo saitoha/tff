@@ -25,7 +25,7 @@
 # ***** END LICENSE BLOCK *****
 
 __author__  = "Hayaki Saito (user@zuse.jp)"
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 __license__ = "MIT"
 
 import sys
@@ -1357,23 +1357,28 @@ if __name__ == '__main__':
     _test()
 
 
-import inspect
-import hashlib
+def _calculate_signature():
+    import inspect
+    import hashlib
+    import sys
+    
+    thismodule = sys.modules[__name__]
+    md5 = hashlib.md5()
+    specs = []
+    for name, member in inspect.getmembers(thismodule):
+        if inspect.isclass(member):
+            if name[0] != "_":
+                classname = name
+                for name, member in inspect.getmembers(member):
+                    if inspect.ismethod(member):
+                        if name.startswith("__") or name[0] != "_":
+                            argspec = inspect.getargspec(member)
+                            args, varargs, keywords, defaultvalue = argspec
+                            specstr = "%s.%s.%s" % (classname, name, args)
+                            specs.append(specstr)
+    specs.sort()
+    md5.update("".join(specs))
+    return md5.hexdigest()
 
-thismodule = sys.modules[__name__]
-md5 = hashlib.md5()
-specs = []
-for name, member in inspect.getmembers(thismodule):
-    if inspect.isclass(member):
-        if name[0] != "_":
-            classname = name
-            for name, member in inspect.getmembers(member):
-                if inspect.ismethod(member):
-                    if name.startswith("__") or name[0] != "_":
-                        argspec = inspect.getargspec(member)
-                        args, varargs, keywords, defaultvalue = argspec
-                        specstr = "%s.%s.%s" % (classname, name, args)
-                        specs.append(specstr)
-specs.sort()
-signature = md5.update("".join(specs))
+signature = _calculate_signature()
 
