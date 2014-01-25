@@ -10,9 +10,9 @@ RM=rm -rf
 PIP=pip
 CYTHON=cython
 
-.PHONY: smoketest nosetest build setuptools install uninstall clean update
+.PHONY: smoketest nosetest build setuptools install uninstall clean update embed_signature
 
-build: update_license_block smoketest
+build: embed_signature update_license_block smoketest
 	ln -f tff.py /tmp/ctff.pyx
 	$(CYTHON) /tmp/ctff.pyx -o ctff.c
 	$(PYTHON) $(SETUP_SCRIPT) sdist
@@ -26,6 +26,9 @@ setup_environment:
 		ln -f tools/vimprojects .vimprojects \
     fi
 
+embed_signature:
+	sed -e "s/^signature *=.*/signature   = \"$(python tff.py)\"/" tff.py
+
 update_license_block:
 	find . -type f | grep '\(.py\|.c\)$$' | xargs python tools/update_license
 
@@ -33,7 +36,7 @@ setuptools:
 	$(PYTHON) -c "import setuptools" || \
 		curl http://peak.telecommunity.com/dist/ez_$(SETUP_SCRIPT) | $(PYTHON)
 
-install: smoketest setuptools
+install: smoketest setuptools build
 	$(PYTHON) $(SETUP_SCRIPT) install
 
 uninstall:

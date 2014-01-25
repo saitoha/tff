@@ -25,8 +25,9 @@
 # ***** END LICENSE BLOCK *****
 
 __author__  = "Hayaki Saito (user@zuse.jp)"
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 __license__ = "MIT"
+signature   = "febb6c52a3e1d52fe530f887fbdd975f"
 
 import sys
 import os
@@ -1354,10 +1355,7 @@ def _test():
 
 ''' main '''
 if __name__ == '__main__':
-    _test()
 
-
-def _calculate_signature():
     import inspect
     import hashlib
     import sys
@@ -1378,7 +1376,6 @@ def _calculate_signature():
                             specs.append(specstr)
     specs.sort()
     md5.update("".join(specs))
-    return md5.hexdigest()
+    sys.stdout.write(md5.hexdigest())
 
-signature = _calculate_signature()
 
