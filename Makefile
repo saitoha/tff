@@ -46,7 +46,7 @@ clean:
 	for name in dist cover build *.egg-info htmlcov; \
 		do find . -type d -name $$name || true; \
 	done | xargs $(RM)
-	for name in *.pyc *.o; \
+	for name in *.pyc *.o .coverage; \
 		do find . -type f -name $$name || true; \
 	done | xargs $(RM)
 
