@@ -28,7 +28,6 @@ __author__  = "Hayaki Saito (user@zuse.jp)"
 __version__ = "0.2.2"
 __license__ = "MIT"
 
-
 import sys
 import os
 import termios
@@ -1356,3 +1355,25 @@ def _test():
 ''' main '''
 if __name__ == '__main__':
     _test()
+
+
+import inspect
+import hashlib
+
+thismodule = sys.modules[__name__]
+md5 = hashlib.md5()
+specs = []
+for name, member in inspect.getmembers(thismodule):
+    if inspect.isclass(member):
+        if name[0] != "_":
+            classname = name
+            for name, member in inspect.getmembers(member):
+                if inspect.ismethod(member):
+                    if name.startswith("__") or name[0] != "_":
+                        argspec = inspect.getargspec(member)
+                        args, varargs, keywords, defaultvalue = argspec
+                        specstr = "%s.%s.%s" % (classname, name, args)
+                        specs.append(specstr)
+specs.sort()
+signature = md5.update("".join(specs))
+
