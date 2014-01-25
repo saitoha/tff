@@ -9,6 +9,7 @@ SETUP_SCRIPT=setup.py
 RM=rm -rf
 PIP=pip
 CYTHON=cython
+SIGNATURE=$$(python tff.py)
 
 .PHONY: smoketest nosetest build setuptools install uninstall clean update embed_signature
 
@@ -27,7 +28,7 @@ setup_environment:
     fi
 
 embed_signature:
-	sed -e "s/^signature *=.*/signature   = \"$(python tff.py)\"/" tff.py
+	sed -i .orig "s/^signature *=.*/signature   = '$(SIGNATURE)'/" tff.py
 
 update_license_block:
 	find . -type f | grep '\(.py\|.c\)$$' | xargs python tools/update_license
@@ -69,7 +70,7 @@ nosetest:
 	              --cover-package=sskk; \
 	fi
 
-update: clean test
+update: build clean test
 	$(PYTHON) $(SETUP_SCRIPT) register
 	$(PYTHON) $(SETUP_SCRIPT) sdist upload
 	$(PYTHON25) $(SETUP_SCRIPT) bdist_egg upload
