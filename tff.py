@@ -114,11 +114,20 @@ class EventObserver:
     def handle_esc(self, context, prefix, final):
         raise NotImplementedError("EventObserver::handle_esc")
 
+    def handle_ss2(self, context, final):
+        raise NotImplementedError("EventObserver::handle_ss2")
+
+    def handle_ss3(self, context, final):
+        raise NotImplementedError("EventObserver::handle_ss3")
+
     def handle_control_string(self, context, prefix, value):
         raise NotImplementedError("EventObserver::handle_control_string")
 
     def handle_char(self, context, c):
         raise NotImplementedError("EventObserver::handle_char")
+
+    def handle_invalid(self, context, seq):
+        raise NotImplementedError("EventObserver::handle_invalid")
 
     def handle_draw(self, context):
         raise NotImplementedError("EventObserver::handle_draw")
@@ -706,6 +715,16 @@ class FilterMultiplexer(EventObserver):
     def handle_esc(self, context, intermediate, final):
         handled_lhs = self.__lhs.handle_esc(context, intermediate, final)
         handled_rhs = self.__rhs.handle_esc(context, intermediate, final)
+        return handled_lhs and handled_rhs
+
+    def handle_ss2(self, context, final):
+        handled_lhs = self.__lhs.handle_ss2(context, final)
+        handled_rhs = self.__rhs.handle_ss2(context, final)
+        return handled_lhs and handled_rhs
+
+    def handle_ss3(self, context, final):
+        handled_lhs = self.__lhs.handle_ss3(context, final)
+        handled_rhs = self.__rhs.handle_ss3(context, final)
         return handled_lhs and handled_rhs
 
     def handle_control_string(self, context, prefix, value):
