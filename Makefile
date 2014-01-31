@@ -12,6 +12,8 @@ CYTHON=cython
 
 .PHONY: smoketest nosetest build setuptools install uninstall clean update embed_signature
 
+all: build
+
 build: embed_signature update_license_block smoketest
 	ln -f tff.py /tmp/ctff.pyx
 	$(CYTHON) /tmp/ctff.pyx -o ctff.c

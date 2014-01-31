@@ -25,7 +25,7 @@
 # ***** END LICENSE BLOCK *****
 
 __author__  = "Hayaki Saito (user@zuse.jp)"
-__version__ = "0.2.7"
+__version__ = "0.2.8"
 __license__ = "MIT"
 signature   = '606d2e0c303b456d741e1359940f7a4f'
 
@@ -1146,10 +1146,11 @@ class Process:
 
     def process_output(self, data):
         self._outputparser.parse(data)
-        self._inputhandler.handle_draw(self._outputcontext)
-        self._outputhandler.handle_draw(self._outputcontext)
-        #self._inputcontext.flush()
-        self._outputcontext.flush()
+        if not self._outputparser.state_is_esc():
+            self._inputhandler.handle_draw(self._outputcontext)
+            self._outputhandler.handle_draw(self._outputcontext)
+            #self._inputcontext.flush()
+            self._outputcontext.flush()
 
     def on_read(self, data):
         self._outputparser.parse(data)
