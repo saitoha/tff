@@ -1,3 +1,7 @@
+2014-02-1 Hayaki Saito <user@zuse.jp>
+
+    * Improve performance during processing DCS/OSC
+
 2013-11-5 Hayaki Saito <user@zuse.jp>
 
     * Pass through ESC + \x20-\x2f key input sequence with time out mechanism 
