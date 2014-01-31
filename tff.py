@@ -1127,10 +1127,11 @@ class Process:
 
     def process_output(self, data):
         self._outputparser.parse(data)
-        self._inputhandler.handle_draw(self._outputcontext)
-        self._outputhandler.handle_draw(self._outputcontext)
-        #self._inputcontext.flush()
-        self._outputcontext.flush()
+        if not self._outputparser.state_is_esc():
+            self._inputhandler.handle_draw(self._outputcontext)
+            self._outputhandler.handle_draw(self._outputcontext)
+            #self._inputcontext.flush()
+            self._outputcontext.flush()
 
     def on_read(self, data):
         self._outputparser.parse(data)
