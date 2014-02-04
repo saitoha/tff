@@ -136,9 +136,12 @@ class Scanner:
     def __iter__(self):
         raise NotImplementedError("Scanner::__iter__")
 
+    # deprecated
     def assign(self, value, termenc):
         raise NotImplementedError("Scanner::assign")
 
+    def continuous_assign(self, value, termenc):
+        raise NotImplementedError("Scanner::continuous_assign")
 
 class OutputStream:
     ''' abstruct TTY output stream '''
@@ -577,17 +580,23 @@ class DefaultParser(Parser):
 #
 class DefaultScanner(Scanner):
     ''' scan input stream and iterate UCS code points '''
-    _data = None
-    _ucs4 = True
 
-    def __init__(self, ucs4=True):
+    def __init__(self, ucs4=True, termenc=None):
         """
         >>> scanner = DefaultScanner()
         >>> scanner._ucs4
         True
         """
+        self._data = None
         self._ucs4 = ucs4
+        if termenc:
+            self._decoder = codecs.getincrementaldecoder(termenc)(errors='replace')
+            self._termenc = termenc
+        else:
+            self._decoder = None
+            self._termenc = None
 
+    # deprecated
     def assign(self, value, termenc):
         """
         >>> scanner = DefaultScanner()
@@ -595,7 +604,19 @@ class DefaultScanner(Scanner):
         >>> scanner._data
         u'01234'
         """
-        self._data = unicode(value, termenc, 'ignore')
+        if self._termenc != termenc:
+            self._decoder = codecs.getincrementaldecoder(termenc)(errors='replace')
+            self._termenc = termenc
+        self._data = self._decoder.decode(value)
+
+    def continuous_assign(self, value):
+        """
+        >>> scanner = DefaultScanner()
+        >>> scanner.continuous_assign("01234", "ascii")
+        >>> scanner._data
+        u'01234'
+        """
+        self._data = self._decoder.decode(value)
 
     def __iter__(self):
         """
