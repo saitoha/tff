@@ -25,9 +25,9 @@
 # ***** END LICENSE BLOCK *****
 
 __author__  = "Hayaki Saito (user@zuse.jp)"
-__version__ = "0.2.8"
+__version__ = "0.2.9"
 __license__ = "MIT"
-signature   = '606d2e0c303b456d741e1359940f7a4f'
+signature   = '272bd51a6856e85ac4032a83b35779a6'
 
 import sys
 import os
@@ -145,9 +145,12 @@ class Scanner:
     def __iter__(self):
         raise NotImplementedError("Scanner::__iter__")
 
+    # deprecated
     def assign(self, value, termenc):
         raise NotImplementedError("Scanner::assign")
 
+    def continuous_assign(self, value, termenc):
+        raise NotImplementedError("Scanner::continuous_assign")
 
 class OutputStream:
     ''' abstruct TTY output stream '''
@@ -586,17 +589,23 @@ class DefaultParser(Parser):
 #
 class DefaultScanner(Scanner):
     ''' scan input stream and iterate UCS code points '''
-    _data = None
-    _ucs4 = True
 
-    def __init__(self, ucs4=True):
+    def __init__(self, ucs4=True, termenc=None):
         """
         >>> scanner = DefaultScanner()
         >>> scanner._ucs4
         True
         """
+        self._data = None
         self._ucs4 = ucs4
+        if termenc:
+            self._decoder = codecs.getincrementaldecoder(termenc)(errors='replace')
+            self._termenc = termenc
+        else:
+            self._decoder = None
+            self._termenc = None
 
+    # deprecated
     def assign(self, value, termenc):
         """
         >>> scanner = DefaultScanner()
@@ -604,7 +613,19 @@ class DefaultScanner(Scanner):
         >>> scanner._data
         u'01234'
         """
-        self._data = unicode(value, termenc, 'ignore')
+        if self._termenc != termenc:
+            self._decoder = codecs.getincrementaldecoder(termenc)(errors='replace')
+            self._termenc = termenc
+        self._data = self._decoder.decode(value)
+
+    def continuous_assign(self, value):
+        """
+        >>> scanner = DefaultScanner(termenc="utf-8")
+        >>> scanner.continuous_assign("01234")
+        >>> scanner._data
+        u'01234'
+        """
+        self._data = self._decoder.decode(value)
 
     def __iter__(self):
         """
