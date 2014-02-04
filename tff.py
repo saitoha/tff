@@ -25,9 +25,9 @@
 # ***** END LICENSE BLOCK *****
 
 __author__  = "Hayaki Saito (user@zuse.jp)"
-__version__ = "0.2.8"
+__version__ = "0.2.9"
 __license__ = "MIT"
-signature   = 'febb6c52a3e1d52fe530f887fbdd975f'
+signature   = '2aaf89c556a5779adf2d6749de196cad'
 
 import sys
 import os
