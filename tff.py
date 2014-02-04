@@ -611,8 +611,8 @@ class DefaultScanner(Scanner):
 
     def continuous_assign(self, value):
         """
-        >>> scanner = DefaultScanner()
-        >>> scanner.continuous_assign("01234", "ascii")
+        >>> scanner = DefaultScanner(termenc="utf-8")
+        >>> scanner.continuous_assign("01234")
         >>> scanner._data
         u'01234'
         """
