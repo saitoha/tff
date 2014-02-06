@@ -897,7 +897,7 @@ class ParseContext(OutputStream, EventDispatcher):
 #
 class DefaultPTY(PTY):
 
-    def __init__(self, term, lang, command, stdin):
+    def __init__(self, term, lang, command, stdin, row=None, col=None):
         self._stdin_fileno = stdin.fileno()
         backup = termios.tcgetattr(self._stdin_fileno)
         self._backup_termios = backup
@@ -912,6 +912,9 @@ class DefaultPTY(PTY):
         self.__setupterm(self._stdin_fileno)
         self.pid = pid
         self._master = master
+
+        if row and col:
+            self.resize(row, col)
 
     def close(self):
         #self.restore_term()
@@ -1086,8 +1089,9 @@ class Process:
         self._tty.write(data)
 
     def close(self):
-        if self._tty is not None:
-            self._tty.close()
+        tty = self._tty
+        if tty is not None:
+            tty.close()
             self._tty = None
 
     def end(self):
@@ -1179,23 +1183,35 @@ class Session:
         self._resized = False
         self._process_map = {}
 
+    # deprecated
     def add_subtty(self, term, lang,
                    command, row, col,
                    termenc,
                    inputhandler=DefaultHandler(),
                    outputhandler=DefaultHandler()):
+        return self.create_process(term, lang, command, row, col,
+                                   termenc, inputhandler, outputhandler)
 
-        tty = DefaultPTY(term, lang, command, sys.stdin)
-        tty.resize(row, col)
+    def create_process(self, term, lang,
+                       command, row, col,
+                       termenc,
+                       inputhandler=DefaultHandler(),
+                       outputhandler=DefaultHandler(),
+                       inputparser=DefaultParser(),
+                       outputparser=DefaultParser(),
+                       inputscanner=DefaultScanner(),
+                       outputscanner=DefaultScanner(),
+                       buffering=False):
+
+        tty = DefaultPTY(term, lang, command, sys.stdin, row, col)
         process = Process(tty)
 
         self._init_process(process,
                            termenc,
                            inputhandler, outputhandler,
-                           DefaultParser(), DefaultParser(),
-                           DefaultScanner(), DefaultScanner(),
-                           buffering=False)
-        self.focus_process(process)
+                           inputparser, outputparser,
+                           inputscanner, outputscanner,
+                           buffering=buffering)
         return process
 
     def getactiveprocess(self):
@@ -1213,7 +1229,8 @@ class Session:
     def blur_process(self):
         process = self._mainprocess
         if process.is_alive():
-            logging.info("Switching focus: fileno=%d (main process)" % process.fileno())
+            template = "Switching focus: fileno=%d (main process)"
+            logging.info(template % process.fileno())
             self._input_target.drain()
             self._input_target = process
 
@@ -1331,7 +1348,6 @@ class Session:
                            inputparser, outputparser,
                            inputscanner, outputscanner,
                            buffering)
-        self.focus_process(mainprocess)
 
         self._resized = False
 
@@ -1369,6 +1385,7 @@ class Session:
                       inputscanner,
                       outputscanner,
                       buffering)
+        self.focus_process(process)
 
 
 def _test():
