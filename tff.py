@@ -24,10 +24,10 @@
 # 
 # ***** END LICENSE BLOCK *****
 
-__author__  = "Hayaki Saito (user@zuse.jp)"
+__author__ = "Hayaki Saito (user@zuse.jp)"
 __version__ = "0.2.9"
 __license__ = "MIT"
-signature   = '86bd7e6ada5c3575a87779e8a70a8f56'
+signature   = 'b87c36758a4c3d666c74490b383f483b'
 
 import sys
 import os
@@ -45,11 +45,13 @@ import logging
 _BUFFER_SIZE = 8192
 _ESC_TIMEOUT = 0.5  # sec
 
+
 ###############################################################################
 #
 # Exceptions
 #
 class NotHandledException(Exception):
+
     ''' thrown when an unknown seqnence is detected '''
 
     def __init__(self, value):
@@ -70,6 +72,7 @@ class NotHandledException(Exception):
 
 
 class ParseException(Exception):
+
     ''' thrown when a parse error is detected '''
 
     def __init__(self, value):
@@ -100,6 +103,7 @@ class ParseException(Exception):
 # - PTY
 #
 class EventObserver:
+
     ''' adapt to event driven ECMA-35/48 parser model '''
 
     def handle_start(self, context):
@@ -114,23 +118,30 @@ class EventObserver:
     def handle_esc(self, context, prefix, final):
         raise NotImplementedError("EventObserver::handle_esc")
 
+    def handle_ss2(self, context, final):
+        raise NotImplementedError("EventObserver::handle_ss2")
+
+    def handle_ss3(self, context, final):
+        raise NotImplementedError("EventObserver::handle_ss3")
+
     def handle_control_string(self, context, prefix, value):
         raise NotImplementedError("EventObserver::handle_control_string")
 
     def handle_char(self, context, c):
         raise NotImplementedError("EventObserver::handle_char")
 
-    def handle_draw(self, context):
-        raise NotImplementedError("EventObserver::handle_draw")
-
     def handle_invalid(self, context, seq):
         raise NotImplementedError("EventObserver::handle_invalid")
+
+    def handle_draw(self, context):
+        raise NotImplementedError("EventObserver::handle_draw")
 
     def handle_resize(self, context, row, col):
         raise NotImplementedError("EventObserver::handle_resize")
 
 
 class Scanner:
+
     ''' forward input iterator '''
 
     def __iter__(self):
@@ -143,7 +154,9 @@ class Scanner:
     def continuous_assign(self, value, termenc):
         raise NotImplementedError("Scanner::continuous_assign")
 
+
 class OutputStream:
+
     ''' abstruct TTY output stream '''
 
     def write(self, c):
@@ -154,6 +167,7 @@ class OutputStream:
 
 
 class EventDispatcher:
+
     ''' Dispatch interface of terminal sequence event oriented parser '''
 
     def dispatch_esc(self, prefix, final):
@@ -170,6 +184,7 @@ class EventDispatcher:
 
 
 class Parser:
+
     ''' abstruct Parser '''
 
     def parse(self, context):
@@ -177,6 +192,7 @@ class Parser:
 
 
 class PTY:
+
     ''' abstruct PTY device '''
 
     def fitsize(self):
@@ -206,6 +222,7 @@ class PTY:
 # Simple Parser implementation
 #
 class SimpleParser(Parser):
+
     ''' simple parser, don't parse ESC/CSI/string seqneces '''
 
     class _MockContext:
@@ -265,6 +282,7 @@ class _MockHandler:
 
 
 class DefaultParser(Parser):
+
     ''' parse ESC/CSI/string seqneces '''
 
     def __init__(self):
@@ -573,12 +591,12 @@ class DefaultParser(Parser):
         self.__state = state
 
 
-
 ###############################################################################
 #
 # Scanner implementation
 #
 class DefaultScanner(Scanner):
+
     ''' scan input stream and iterate UCS code points '''
 
     def __init__(self, ucs4=True, termenc=None):
@@ -641,13 +659,14 @@ class DefaultScanner(Scanner):
                 yield ord(x)
 
 
-
 ###############################################################################
 #
 # Handler implementation
 #
 class DefaultHandler(EventObserver):
+
     ''' default handler, pass through all ESC/CSI/string seqnceses '''
+
     def __init__(self):
         pass
 
@@ -727,6 +746,16 @@ class FilterMultiplexer(EventObserver):
     def handle_esc(self, context, intermediate, final):
         handled_lhs = self.__lhs.handle_esc(context, intermediate, final)
         handled_rhs = self.__rhs.handle_esc(context, intermediate, final)
+        return handled_lhs and handled_rhs
+
+    def handle_ss2(self, context, final):
+        handled_lhs = self.__lhs.handle_ss2(context, final)
+        handled_rhs = self.__rhs.handle_ss2(context, final)
+        return handled_lhs and handled_rhs
+
+    def handle_ss3(self, context, final):
+        handled_lhs = self.__lhs.handle_ss3(context, final)
+        handled_rhs = self.__rhs.handle_ss3(context, final)
         return handled_lhs and handled_rhs
 
     def handle_control_string(self, context, prefix, value):
@@ -905,9 +934,7 @@ class DefaultPTY(PTY):
         if not pid:
             os.environ['TERM'] = term
             os.environ['LANG'] = lang
-            os.execlp('/bin/sh',
-                      '/bin/sh', '-c',
-                      'exec %s' % command)
+            os.execlp('/bin/sh', '/bin/sh', '-c', 'exec %s' % command)
 
         self.__setupterm(self._stdin_fileno)
         self.pid = pid
@@ -1020,6 +1047,7 @@ class DefaultPTY(PTY):
         #fcntl.ioctl(self._master, termios.TIOCSTART, 0)
         termios.tcflow(self._master, termios.TCOON)
 
+
 class MockParseContext(ParseContext):
 
     def __init__(self):
@@ -1074,7 +1102,7 @@ class Process:
         return self._tty.pid
 
     def is_alive(self):
-        return self._tty is not None 
+        return self._tty is not None
 
     def fileno(self):
         return self._tty.fileno()
@@ -1398,7 +1426,7 @@ if __name__ == '__main__':
     import inspect
     import hashlib
     import sys
-    
+
     thismodule = sys.modules[__name__]
     md5 = hashlib.md5()
     specs = []
@@ -1416,5 +1444,3 @@ if __name__ == '__main__':
     specs.sort()
     md5.update("".join(specs))
     sys.stdout.write(md5.hexdigest())
-
-
