@@ -9,13 +9,18 @@ import os
 filename = inspect.getfile(inspect.currentframe())
 dirpath = os.path.abspath(os.path.dirname(filename))
 
+extra_args = []
+
+if os.uname()[0] == 'Darwin':
+    # Clang no longer supports GCC arguments, and will fail in the future
+    extra_args.append('-Wno-error=unused-command-line-argument-hard-error-in-future')
+
 setup(name                  = 'tff',
       version               = __version__,
       description           = 'Terminal Filter Framework',
       long_description      = open(dirpath + "/README.rst").read(),
       py_modules            = ['tff'],
-      ext_modules           = [Extension('ctff', sources = ['ctff.c'],
-                                         extra_compile_args = ['-Wno-error=unused-command-line-argument-hard-error-in-future'])],
+      ext_modules           = [Extension('ctff', sources = ['ctff.c'], extra_compile_args = extra_args)],
       eager_resources       = [],
       classifiers           = ['Development Status :: 4 - Beta',
                                'Topic :: Terminals',
