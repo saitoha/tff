@@ -29,7 +29,7 @@ setup_environment:
     fi
 
 embed_signature:
-	perl -pi -e "s/^signature *=.*/signature   = '$$(python tff.py)'/" tff.py
+	perl -pi -e "s/^signature *=.*/signature = '$$(python tff.py)'/" tff.py
 
 update_license_block:
 	find . -type f | grep '\(.py\|.c\)$$' | xargs python tools/update_license
