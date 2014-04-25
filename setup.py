@@ -3,7 +3,8 @@
 from setuptools import setup, find_packages, Extension
 from tff import __version__, __license__, __author__, __doc__
 
-import inspect, os
+import inspect
+import os
 
 filename = inspect.getfile(inspect.currentframe())
 dirpath = os.path.abspath(os.path.dirname(filename))
@@ -13,7 +14,8 @@ setup(name                  = 'tff',
       description           = 'Terminal Filter Framework',
       long_description      = open(dirpath + "/README.rst").read(),
       py_modules            = ['tff'],
-      ext_modules           = [Extension('ctff', sources = ['ctff.c'])],
+      ext_modules           = [Extension('ctff', sources = ['ctff.c'],
+                                         extra_compile_args = ['-Wno-error=unused-command-line-argument-hard-error-in-future'])],
       eager_resources       = [],
       classifiers           = ['Development Status :: 4 - Beta',
                                'Topic :: Terminals',

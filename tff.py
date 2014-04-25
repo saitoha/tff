@@ -27,7 +27,7 @@
 __author__  = "Hayaki Saito (user@zuse.jp)"
 __version__ = "0.2.9"
 __license__ = "MIT"
-signature   = '2aaf89c556a5779adf2d6749de196cad'
+signature   = '86bd7e6ada5c3575a87779e8a70a8f56'
 
 import sys
 import os
